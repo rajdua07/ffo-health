@@ -18,6 +18,7 @@ interface WealthboxContact {
   referrer?: {
     name: string;
   };
+  tags?: Array<{ name: string }>;
 }
 
 interface WealthboxResponse<T> {
@@ -48,6 +49,38 @@ async function wealthboxFetch(endpoint: string, options: RequestInit = {}) {
   }
 
   return response.json();
+}
+
+// Tag filtering configuration
+const REQUIRED_TAGS = [
+  'Planning - Maintenance',
+  'Planning - FFO',
+  'Planning - Private Office'
+];
+
+const EXCLUDED_TAGS = [
+  'Inactive',
+  'Inactive Planning Client'
+];
+
+export function shouldIncludeContact(contact: WealthboxContact): boolean {
+  const tagNames = (contact.tags || []).map(tag => tag.name);
+
+  // Check if contact has any excluded tags
+  const hasExcludedTag = EXCLUDED_TAGS.some(excludedTag =>
+    tagNames.includes(excludedTag)
+  );
+
+  if (hasExcludedTag) {
+    return false;
+  }
+
+  // Check if contact has at least one required tag
+  const hasRequiredTag = REQUIRED_TAGS.some(requiredTag =>
+    tagNames.includes(requiredTag)
+  );
+
+  return hasRequiredTag;
 }
 
 export async function getWealthboxContacts(): Promise<WealthboxContact[]> {

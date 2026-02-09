@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server';
-import { getWealthboxContacts, mapWealthboxToFFOClient } from '@/lib/wealthbox';
+import { getWealthboxContacts, mapWealthboxToFFOClient, shouldIncludeContact } from '@/lib/wealthbox';
 
 export async function GET() {
   try {
     const contacts = await getWealthboxContacts();
     const clients = contacts
+      // Filter by tags first (before mapping)
+      .filter(contact => shouldIncludeContact(contact))
       .map(mapWealthboxToFFOClient)
       // Filter out contacts with no valid name (Unknown or empty)
       .filter(client => {
