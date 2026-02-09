@@ -1,0 +1,14 @@
+LOGO SETUP INSTRUCTIONS
+========================
+
+Please add your Fractional Family Office logo image to this public folder with the filename:
+  ffo-logo.png
+
+The logo should be:
+- PNG format
+- Recommended height: 40-60px (width will auto-adjust)
+- Transparent background preferred
+
+Once you add the file, the application will automatically display your logo in the header.
+
+Current expected path: /Users/rajdua/Desktop/FFO Health/ffo-health/public/ffo-logo.png
