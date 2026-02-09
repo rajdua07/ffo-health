@@ -23,6 +23,11 @@ interface WealthboxContact {
 interface WealthboxResponse<T> {
   contacts?: T[];
   contact?: T;
+  meta?: {
+    total_count: number;
+    total_pages: number;
+    page: number;
+  };
 }
 
 async function wealthboxFetch(endpoint: string, options: RequestInit = {}) {
@@ -47,8 +52,28 @@ async function wealthboxFetch(endpoint: string, options: RequestInit = {}) {
 
 export async function getWealthboxContacts(): Promise<WealthboxContact[]> {
   try {
-    const data: WealthboxResponse<WealthboxContact> = await wealthboxFetch('/contacts?per_page=100&status=active');
-    return data.contacts || [];
+    const allContacts: WealthboxContact[] = [];
+    let page = 1;
+    let totalPages = 1;
+
+    // Fetch all pages of contacts
+    do {
+      const data: WealthboxResponse<WealthboxContact> = await wealthboxFetch(
+        `/contacts?per_page=100&status=active&page=${page}`
+      );
+
+      if (data.contacts) {
+        allContacts.push(...data.contacts);
+      }
+
+      if (data.meta) {
+        totalPages = data.meta.total_pages;
+      }
+
+      page++;
+    } while (page <= totalPages);
+
+    return allContacts;
   } catch (error) {
     console.error('Error fetching Wealthbox contacts:', error);
     throw error;
