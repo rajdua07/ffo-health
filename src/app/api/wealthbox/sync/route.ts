@@ -4,7 +4,15 @@ import { getWealthboxContacts, mapWealthboxToFFOClient } from '@/lib/wealthbox';
 export async function GET() {
   try {
     const contacts = await getWealthboxContacts();
-    const clients = contacts.map(mapWealthboxToFFOClient);
+    const clients = contacts
+      .map(mapWealthboxToFFOClient)
+      // Filter out contacts with no valid name (Unknown or empty)
+      .filter(client => {
+        const hasValidName = client.name &&
+                            client.name.trim() !== '' &&
+                            client.name !== 'Unknown';
+        return hasValidName;
+      });
 
     return NextResponse.json({
       success: true,
