@@ -61,6 +61,129 @@ function StatCard({ label, value, color = "#111", sub, darkMode }: { label: stri
   </div>;
 }
 
+// ===== IMPORT DIALOG =====
+function ImportDialog({
+  clients,
+  onConfirm,
+  onCancel,
+  darkMode
+}: {
+  clients: Client[];
+  onConfirm: (selectedIds: string[]) => void;
+  onCancel: () => void;
+  darkMode?: boolean;
+}) {
+  const [selected, setSelected] = useState<Set<string>>(new Set(clients.map(c => c.id)));
+
+  const toggleClient = (id: string) => {
+    const newSelected = new Set(selected);
+    if (newSelected.has(id)) {
+      newSelected.delete(id);
+    } else {
+      newSelected.add(id);
+    }
+    setSelected(newSelected);
+  };
+
+  const toggleAll = () => {
+    if (selected.size === clients.length) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(clients.map(c => c.id)));
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+      <div className={`rounded-xl border shadow-xl max-w-2xl w-full max-h-[80vh] flex flex-col ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
+        {/* Header */}
+        <div className={`p-4 border-b ${darkMode ? "border-slate-700" : "border-gray-200"}`}>
+          <h3 className={`text-lg font-bold ${darkMode ? "text-gray-100" : "text-gray-900"}`}>
+            Select Clients to Import
+          </h3>
+          <p className={`text-sm mt-1 ${darkMode ? "text-gray-400" : "text-gray-600"}`}>
+            Found {clients.length} new client{clients.length === 1 ? '' : 's'} from Wealthbox
+          </p>
+        </div>
+
+        {/* Client List */}
+        <div className="flex-1 overflow-y-auto p-4">
+          <div className="mb-3">
+            <button
+              onClick={toggleAll}
+              className={`text-sm font-medium ${darkMode ? "text-blue-400 hover:text-blue-300" : "text-blue-600 hover:text-blue-800"}`}
+            >
+              {selected.size === clients.length ? "Deselect All" : "Select All"}
+            </button>
+          </div>
+
+          <div className="space-y-2">
+            {clients.map((client) => (
+              <label
+                key={client.id}
+                className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                  selected.has(client.id)
+                    ? darkMode
+                      ? "bg-blue-900 border-blue-700"
+                      : "bg-blue-50 border-blue-200"
+                    : darkMode
+                    ? "bg-slate-700 border-slate-600 hover:bg-slate-650"
+                    : "bg-gray-50 border-gray-200 hover:bg-gray-100"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={selected.has(client.id)}
+                  onChange={() => toggleClient(client.id)}
+                  className="mt-1 rounded"
+                />
+                <div className="flex-1 min-w-0">
+                  <div className={`font-semibold ${darkMode ? "text-gray-100" : "text-gray-900"}`}>
+                    {client.name}
+                  </div>
+                  <div className={`text-xs mt-1 ${darkMode ? "text-gray-400" : "text-gray-600"}`}>
+                    {client.tier} • {client.leadAdvisor} • {fmtM(client.monthlyFee)}/mo
+                  </div>
+                  {client.referralSource && (
+                    <div className={`text-xs mt-0.5 ${darkMode ? "text-gray-500" : "text-gray-500"}`}>
+                      Source: {client.referralSource}
+                    </div>
+                  )}
+                </div>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className={`p-4 border-t flex gap-3 ${darkMode ? "border-slate-700" : "border-gray-200"}`}>
+          <button
+            onClick={onCancel}
+            className={`flex-1 px-4 py-2 rounded-lg font-medium ${
+              darkMode
+                ? "bg-slate-700 text-gray-200 hover:bg-slate-600"
+                : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+            }`}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => onConfirm(Array.from(selected))}
+            disabled={selected.size === 0}
+            className={`flex-1 px-4 py-2 rounded-lg font-medium ${
+              selected.size === 0
+                ? "opacity-50 cursor-not-allowed bg-blue-600 text-white"
+                : "bg-blue-600 text-white hover:bg-blue-700"
+            }`}
+          >
+            Import {selected.size} Client{selected.size === 1 ? '' : 's'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ===== TABS =====
 const TABS = [
   { id: "overview", label: "Overview" }, { id: "ranking", label: "Ranking" },
@@ -476,7 +599,7 @@ function ActivityTab({ clients, scores, wows, darkMode }: { clients: Client[]; s
 }
 
 // ===== SETTINGS =====
-function SettingsTab({ settings, onSave, onSync, onImport, darkMode }: { settings: Settings; onSave: (s: Settings) => void; onSync: () => void; onImport: () => Promise<number>; darkMode?: boolean }) {
+function SettingsTab({ settings, onSave, onSync, onImport, darkMode }: { settings: Settings; onSave: (s: Settings) => void; onSync: () => void; onImport: (clientIds: string[]) => Promise<number>; darkMode?: boolean }) {
   const [sources, setSources] = useState<string[]>(settings.referralSources || REFERRAL_SOURCES);
   const [newSource, setNewSource] = useState("");
   const [wbEnabled, setWbEnabled] = useState(settings.wealthboxEnabled || false);
@@ -485,6 +608,7 @@ function SettingsTab({ settings, onSave, onSync, onImport, darkMode }: { setting
   const [syncStatus, setSyncStatus] = useState<string>("");
   const [importStatus, setImportStatus] = useState<string>("");
   const [testStatus, setTestStatus] = useState<string>("");
+  const [importDialog, setImportDialog] = useState<{ open: boolean; clients: Client[] }>({ open: false, clients: [] });
 
   const addSource = () => {
     if (newSource.trim() && !sources.includes(newSource.trim())) {
@@ -531,21 +655,44 @@ function SettingsTab({ settings, onSave, onSync, onImport, darkMode }: { setting
     }
   };
 
-  const handleImport = async () => {
+  const handleImportClick = async () => {
+    setImporting(true);
+    setImportStatus("Fetching new clients...");
+    try {
+      // Fetch new clients from Wealthbox
+      const { newClients } = await importNewClientsFromWealthbox([]);
+      if (newClients.length === 0) {
+        setImportStatus(`✓ No new clients to import`);
+        setImporting(false);
+      } else {
+        // Show the dialog
+        setImportDialog({ open: true, clients: newClients });
+        setImportStatus("");
+        setImporting(false);
+      }
+    } catch (error) {
+      setImportStatus(`✗ Failed to fetch clients: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setImporting(false);
+    }
+  };
+
+  const handleImportConfirm = async (selectedIds: string[]) => {
+    setImportDialog({ open: false, clients: [] });
     setImporting(true);
     setImportStatus("Importing...");
     try {
-      const count = await onImport();
-      if (count > 0) {
-        setImportStatus(`✓ Imported ${count} new client${count === 1 ? '' : 's'}!`);
-      } else {
-        setImportStatus(`✓ No new clients to import`);
-      }
+      const count = await onImport(selectedIds);
+      setImportStatus(`✓ Imported ${count} client${count === 1 ? '' : 's'}!`);
     } catch (error) {
       setImportStatus(`✗ Import failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setImporting(false);
     }
+  };
+
+  const handleImportCancel = () => {
+    setImportDialog({ open: false, clients: [] });
+    setImportStatus("");
   };
 
   return <div className={`rounded-xl border p-4 sm:p-5 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
@@ -614,7 +761,7 @@ function SettingsTab({ settings, onSave, onSync, onImport, darkMode }: { setting
 
               <div className={`border-t pt-3 ${darkMode ? "border-slate-600" : "border-blue-100"}`}>
                 <button
-                  onClick={handleImport}
+                  onClick={handleImportClick}
                   disabled={importing}
                   className={`w-full px-4 py-2 rounded-lg text-sm font-medium ${importing ? "opacity-50 cursor-not-allowed" : ""} ${darkMode ? "bg-slate-600 text-gray-200 hover:bg-slate-500" : "bg-white text-gray-700 hover:bg-gray-50"} border ${darkMode ? "border-slate-500" : "border-gray-300"}`}
                 >
@@ -671,6 +818,16 @@ function SettingsTab({ settings, onSave, onSync, onImport, darkMode }: { setting
         <button onClick={() => { setSources(settings.referralSources || REFERRAL_SOURCES); setWbEnabled(settings.wealthboxEnabled || false); }} className={`border px-4 py-2 rounded-lg text-sm ${darkMode ? "border-slate-600 text-gray-300 hover:bg-slate-700" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>Reset</button>
       </div>
     </div>
+
+    {/* Import Dialog */}
+    {importDialog.open && (
+      <ImportDialog
+        clients={importDialog.clients}
+        onConfirm={handleImportConfirm}
+        onCancel={handleImportCancel}
+        darkMode={darkMode}
+      />
+    )}
   </div>;
 }
 
@@ -1003,14 +1160,16 @@ export default function App() {
     }
   };
 
-  const handleWealthboxImport = async (): Promise<number> => {
+  const handleWealthboxImport = async (clientIds: string[]): Promise<number> => {
     try {
-      const { newClients, count } = await importNewClientsFromWealthbox(data.clients);
-      if (count > 0) {
-        const mergedClients = [...data.clients, ...newClients];
+      const { newClients } = await importNewClientsFromWealthbox(data.clients);
+      // Filter to only selected clients
+      const selectedClients = newClients.filter(c => clientIds.includes(c.id));
+      if (selectedClients.length > 0) {
+        const mergedClients = [...data.clients, ...selectedClients];
         await persist({ ...data, clients: mergedClients });
       }
-      return count;
+      return selectedClients.length;
     } catch (error) {
       console.error('Wealthbox import error:', error);
       throw error;
