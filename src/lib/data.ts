@@ -20,6 +20,8 @@ export interface Client {
   referralSource?: string;
   referredBy?: string;
   referralNotes?: string;
+  birthDate?: string; // Client's birthdate from Wealthbox
+  completedTasks?: Array<{ name: string; completedAt: string; description?: string }>; // Recent completed tasks from Wealthbox
 }
 
 export interface Score {

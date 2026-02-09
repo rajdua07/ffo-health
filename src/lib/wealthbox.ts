@@ -9,6 +9,8 @@ interface WealthboxContact {
   first_name: string;
   last_name: string;
   created_at: string;
+  birth_date?: string;
+  client_since?: string;
   source?: string;
   owner?: {
     id: string;
@@ -19,6 +21,16 @@ interface WealthboxContact {
     name: string;
   };
   tags?: Array<{ name: string }>;
+}
+
+interface WealthboxTask {
+  id: string;
+  name: string;
+  description?: string;
+  due_date?: string;
+  completed_at?: string;
+  completed: boolean;
+  contact_id?: string;
 }
 
 interface WealthboxResponse<T> {
@@ -126,6 +138,18 @@ export async function getWealthboxContact(id: string): Promise<WealthboxContact 
   }
 }
 
+export async function getCompletedTasksForContact(contactId: string): Promise<WealthboxTask[]> {
+  try {
+    const data: { tasks?: WealthboxTask[] } = await wealthboxFetch(
+      `/contacts/${contactId}/tasks?completed=true&per_page=50`
+    );
+    return data.tasks || [];
+  } catch (error) {
+    console.error(`Error fetching tasks for contact ${contactId}:`, error);
+    return [];
+  }
+}
+
 export async function updateWealthboxContact(id: string, customFields: Record<string, any>): Promise<boolean> {
   try {
     await wealthboxFetch(`/contacts/${id}`, {
@@ -143,8 +167,29 @@ export async function updateWealthboxContact(id: string, customFields: Record<st
   }
 }
 
-export function mapWealthboxToFFOClient(contact: WealthboxContact): Client {
+export async function mapWealthboxToFFOClient(contact: WealthboxContact): Promise<Client> {
   const name = `${contact.first_name || ''} ${contact.last_name || ''}`.trim() || 'Unknown';
+
+  // Fetch completed tasks for this contact
+  let completedTasks: Array<{ name: string; completedAt: string; description?: string }> = [];
+  try {
+    const tasks = await getCompletedTasksForContact(contact.id);
+    completedTasks = tasks
+      .filter(task => task.completed_at) // Only include tasks with completion date
+      .slice(0, 20) // Limit to most recent 20 tasks
+      .map(task => ({
+        name: task.name,
+        completedAt: task.completed_at!,
+        description: task.description
+      }));
+  } catch (error) {
+    console.error(`Failed to fetch tasks for contact ${contact.id}:`, error);
+  }
+
+  // Use client_since if available, otherwise fall back to created_at
+  const onboardDate = contact.client_since?.split('T')[0] ||
+                      contact.created_at?.split('T')[0] ||
+                      new Date().toISOString().split('T')[0];
 
   return {
     id: `ffo-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, // Unique FFO Health ID
@@ -152,10 +197,12 @@ export function mapWealthboxToFFOClient(contact: WealthboxContact): Client {
     name,
     tier: (contact.custom_fields?.ffo_tier as string) || 'FFO',
     leadAdvisor: contact.owner?.name || 'Landon',
-    onboardDate: contact.created_at?.split('T')[0] || new Date().toISOString().split('T')[0],
+    onboardDate,
     monthlyFee: Number(contact.custom_fields?.ffo_monthly_fee) || 0,
     referralSource: contact.source || 'Direct Outreach',
     referredBy: contact.referrer?.name,
+    birthDate: contact.birth_date?.split('T')[0], // Store birthdate
+    completedTasks, // Include completed tasks
   };
 }
 

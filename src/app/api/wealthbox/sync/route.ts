@@ -4,17 +4,21 @@ import { getWealthboxContacts, mapWealthboxToFFOClient, shouldIncludeContact } f
 export async function GET() {
   try {
     const contacts = await getWealthboxContacts();
-    const clients = contacts
-      // Filter by tags first (before mapping)
-      .filter(contact => shouldIncludeContact(contact))
-      .map(mapWealthboxToFFOClient)
-      // Filter out contacts with no valid name (Unknown or empty)
-      .filter(client => {
-        const hasValidName = client.name &&
-                            client.name.trim() !== '' &&
-                            client.name !== 'Unknown';
-        return hasValidName;
-      });
+
+    // Filter by tags first (before mapping)
+    const filteredContacts = contacts.filter(contact => shouldIncludeContact(contact));
+
+    // Map contacts to clients (async now because we fetch tasks)
+    const clientPromises = filteredContacts.map(contact => mapWealthboxToFFOClient(contact));
+    const allClients = await Promise.all(clientPromises);
+
+    // Filter out contacts with no valid name (Unknown or empty)
+    const clients = allClients.filter(client => {
+      const hasValidName = client.name &&
+                          client.name.trim() !== '' &&
+                          client.name !== 'Unknown';
+      return hasValidName;
+    });
 
     return NextResponse.json({
       success: true,
