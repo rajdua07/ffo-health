@@ -55,7 +55,10 @@ async function wealthboxFetch(endpoint: string, options: RequestInit = {}) {
 const REQUIRED_TAGS = [
   'Planning - Maintenance',
   'Planning - FFO',
-  'Planning - Private Office'
+  'Planning - Private Office',
+  'Investments',
+  'Krop - 2025 Tax Project',
+  'Tax - FFO'
 ];
 
 const EXCLUDED_TAGS = [
