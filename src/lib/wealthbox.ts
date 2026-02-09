@@ -140,9 +140,9 @@ export async function getWealthboxContact(id: string): Promise<WealthboxContact 
 
 export async function getCompletedTasksForContact(contactId: string): Promise<WealthboxTask[]> {
   try {
-    // Try fetching tasks - might be /tasks endpoint with contact_id filter
+    // Fetch completed tasks for this contact using resource_id and resource_type
     const data: { tasks?: WealthboxTask[] } = await wealthboxFetch(
-      `/tasks?contact_id=${contactId}&completed=true&per_page=50`
+      `/tasks?resource_id=${contactId}&resource_type=Contact&completed=true&per_page=50`
     );
     return data.tasks || [];
   } catch (error) {
