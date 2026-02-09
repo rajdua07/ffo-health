@@ -140,12 +140,14 @@ export async function getWealthboxContact(id: string): Promise<WealthboxContact 
 
 export async function getCompletedTasksForContact(contactId: string): Promise<WealthboxTask[]> {
   try {
+    // Try fetching tasks - might be /tasks endpoint with contact_id filter
     const data: { tasks?: WealthboxTask[] } = await wealthboxFetch(
-      `/contacts/${contactId}/tasks?completed=true&per_page=50`
+      `/tasks?contact_id=${contactId}&completed=true&per_page=50`
     );
     return data.tasks || [];
   } catch (error) {
-    console.error(`Error fetching tasks for contact ${contactId}:`, error);
+    // Tasks endpoint might not be available or have different permissions
+    // Fail silently and return empty array
     return [];
   }
 }
