@@ -5,6 +5,7 @@ import {
   loadData, saveData, calcScore, dimAvg, getStatus, sColor, getFee, fmtM, timeAgo,
   getNextAnniversary, canScore, canEdit, canExport, canViewAllAdvisors, filterByAdvisor,
   getReferralSources, syncFromWealthbox, pushScoreToWealthbox, testWealthboxConnection,
+  importNewClientsFromWealthbox,
   METRICS, DIMENSIONS, DIM_WEIGHTS, MO, TIERS, ADVISORS, WOW_TYPES, REFERRAL_SOURCES,
   CADENCE_DAYS, TIER_REVENUE, DEFAULT_USERS,
   DEFAULT_CLIENTS, DEFAULT_SCORES, DEFAULT_WOWS, DEFAULT_REFERRALS
@@ -475,12 +476,14 @@ function ActivityTab({ clients, scores, wows, darkMode }: { clients: Client[]; s
 }
 
 // ===== SETTINGS =====
-function SettingsTab({ settings, onSave, onSync, darkMode }: { settings: Settings; onSave: (s: Settings) => void; onSync: () => void; darkMode?: boolean }) {
+function SettingsTab({ settings, onSave, onSync, onImport, darkMode }: { settings: Settings; onSave: (s: Settings) => void; onSync: () => void; onImport: () => Promise<number>; darkMode?: boolean }) {
   const [sources, setSources] = useState<string[]>(settings.referralSources || REFERRAL_SOURCES);
   const [newSource, setNewSource] = useState("");
   const [wbEnabled, setWbEnabled] = useState(settings.wealthboxEnabled || false);
   const [syncing, setSyncing] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string>("");
+  const [importStatus, setImportStatus] = useState<string>("");
   const [testStatus, setTestStatus] = useState<string>("");
 
   const addSource = () => {
@@ -525,6 +528,23 @@ function SettingsTab({ settings, onSave, onSync, darkMode }: { settings: Setting
       setSyncStatus(`✗ Sync failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const handleImport = async () => {
+    setImporting(true);
+    setImportStatus("Importing...");
+    try {
+      const count = await onImport();
+      if (count > 0) {
+        setImportStatus(`✓ Imported ${count} new client${count === 1 ? '' : 's'}!`);
+      } else {
+        setImportStatus(`✓ No new clients to import`);
+      }
+    } catch (error) {
+      setImportStatus(`✗ Import failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -592,6 +612,19 @@ function SettingsTab({ settings, onSave, onSync, darkMode }: { settings: Setting
                 </button>
               </div>
 
+              <div className={`border-t pt-3 ${darkMode ? "border-slate-600" : "border-blue-100"}`}>
+                <button
+                  onClick={handleImport}
+                  disabled={importing}
+                  className={`w-full px-4 py-2 rounded-lg text-sm font-medium ${importing ? "opacity-50 cursor-not-allowed" : ""} ${darkMode ? "bg-slate-600 text-gray-200 hover:bg-slate-500" : "bg-white text-gray-700 hover:bg-gray-50"} border ${darkMode ? "border-slate-500" : "border-gray-300"}`}
+                >
+                  {importing ? "Importing..." : "📥 Import New Clients Only"}
+                </button>
+                <p className={`text-[11px] mt-1.5 ${darkMode ? "text-gray-400" : "text-gray-600"}`}>
+                  One-time import of new Wealthbox contacts not already in the app. Existing clients are not affected.
+                </p>
+              </div>
+
               {testStatus && (
                 <div className={`text-xs p-2 rounded ${testStatus.startsWith("✓") ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}>
                   {testStatus}
@@ -601,6 +634,12 @@ function SettingsTab({ settings, onSave, onSync, darkMode }: { settings: Setting
               {syncStatus && (
                 <div className={`text-xs p-2 rounded ${syncStatus.startsWith("✓") ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}>
                   {syncStatus}
+                </div>
+              )}
+
+              {importStatus && (
+                <div className={`text-xs p-2 rounded ${importStatus.startsWith("✓") ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}>
+                  {importStatus}
                 </div>
               )}
 
@@ -964,6 +1003,20 @@ export default function App() {
     }
   };
 
+  const handleWealthboxImport = async (): Promise<number> => {
+    try {
+      const { newClients, count } = await importNewClientsFromWealthbox(data.clients);
+      if (count > 0) {
+        const mergedClients = [...data.clients, ...newClients];
+        await persist({ ...data, clients: mergedClients });
+      }
+      return count;
+    } catch (error) {
+      console.error('Wealthbox import error:', error);
+      throw error;
+    }
+  };
+
   const handleReset = async () => {
     await persist({ clients: DEFAULT_CLIENTS, scores: DEFAULT_SCORES, wows: DEFAULT_WOWS, referrals: DEFAULT_REFERRALS, settings: { referralSources: REFERRAL_SOURCES } });
     setView("dashboard"); setSelectedId(null); setTab("overview");
@@ -1002,7 +1055,7 @@ export default function App() {
         {tab === "revenue" && <RevenueTab stats={stats} darkMode={darkMode} />}
         {tab === "referrals" && <ReferralsTab stats={stats} referrals={data.referrals || []} onAddRef={() => setView("addRef")} referralSources={getReferralSources(data.settings)} darkMode={darkMode} />}
         {tab === "activity" && <ActivityTab clients={visibleClients} scores={data.scores || []} wows={data.wows || []} darkMode={darkMode} />}
-        {tab === "settings" && <SettingsTab settings={data.settings || { referralSources: REFERRAL_SOURCES }} onSave={handleSaveSettings} onSync={handleWealthboxSync} darkMode={darkMode} />}
+        {tab === "settings" && <SettingsTab settings={data.settings || { referralSources: REFERRAL_SOURCES }} onSave={handleSaveSettings} onSync={handleWealthboxSync} onImport={handleWealthboxImport} darkMode={darkMode} />}
       </>}
 
       {view === "detail" && selectedStat && <ClientDetail client={selectedStat} scores={data.scores || []} wows={data.wows || []} referrals={data.referrals || []} onBack={back} onScore={() => setView("score")} onAddWow={() => setView("addWow")} onEditClient={() => setView("editClient")} onExportPDF={handleExportClientPDF} user={currentUser} darkMode={darkMode} />}

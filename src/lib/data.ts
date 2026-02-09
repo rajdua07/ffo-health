@@ -353,3 +353,27 @@ export async function testWealthboxConnection(): Promise<{ success: boolean; mes
     };
   }
 }
+
+export async function importNewClientsFromWealthbox(existingClients: Client[]): Promise<{ newClients: Client[]; count: number }> {
+  if (typeof window === "undefined") return { newClients: [], count: 0 };
+  try {
+    const wealthboxClients = await syncFromWealthbox();
+
+    // Get all existing wealthboxIds
+    const existingWealthboxIds = new Set(
+      existingClients
+        .map(c => c.wealthboxId)
+        .filter(Boolean) as string[]
+    );
+
+    // Filter to only new clients (not already in the app)
+    const newClients = wealthboxClients.filter(wc =>
+      wc.wealthboxId && !existingWealthboxIds.has(wc.wealthboxId)
+    );
+
+    return { newClients, count: newClients.length };
+  } catch (error) {
+    console.error('Failed to import new clients from Wealthbox:', error);
+    throw error;
+  }
+}
