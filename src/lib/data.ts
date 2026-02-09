@@ -379,3 +379,23 @@ export async function importNewClientsFromWealthbox(existingClients: Client[]): 
     throw error;
   }
 }
+
+export async function enrichClientsWithTasks(clients: Client[]): Promise<Client[]> {
+  if (typeof window === "undefined") return clients;
+  try {
+    const response = await fetch('/api/wealthbox/enrich-tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clients })
+    });
+    const data = await response.json();
+    if (data.success) {
+      return data.clients;
+    }
+    throw new Error(data.error || 'Failed to enrich clients with tasks');
+  } catch (error) {
+    console.error('Failed to enrich clients with tasks:', error);
+    // Return original clients if enrichment fails
+    return clients;
+  }
+}

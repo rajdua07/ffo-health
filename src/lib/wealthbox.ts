@@ -169,24 +169,9 @@ export async function updateWealthboxContact(id: string, customFields: Record<st
   }
 }
 
-export async function mapWealthboxToFFOClient(contact: WealthboxContact): Promise<Client> {
+// Fast version: Map contact to client WITHOUT fetching tasks (for display in dialog)
+export function mapWealthboxToFFOClientFast(contact: WealthboxContact): Client {
   const name = `${contact.first_name || ''} ${contact.last_name || ''}`.trim() || 'Unknown';
-
-  // Fetch completed tasks for this contact
-  let completedTasks: Array<{ name: string; completedAt: string; description?: string }> = [];
-  try {
-    const tasks = await getCompletedTasksForContact(contact.id);
-    completedTasks = tasks
-      .filter(task => task.completed_at) // Only include tasks with completion date
-      .slice(0, 20) // Limit to most recent 20 tasks
-      .map(task => ({
-        name: task.name,
-        completedAt: task.completed_at!,
-        description: task.description
-      }));
-  } catch (error) {
-    console.error(`Failed to fetch tasks for contact ${contact.id}:`, error);
-  }
 
   // Use client_since if available, otherwise fall back to created_at
   const onboardDate = contact.client_since?.split('T')[0] ||
@@ -204,8 +189,38 @@ export async function mapWealthboxToFFOClient(contact: WealthboxContact): Promis
     referralSource: contact.source || 'Direct Outreach',
     referredBy: contact.referrer?.name,
     birthDate: contact.birth_date?.split('T')[0], // Store birthdate
-    completedTasks, // Include completed tasks
+    completedTasks: [], // Will be populated later if needed
   };
+}
+
+// Slow version: Fetch and add completed tasks to an existing client (called after selection)
+export async function enrichClientWithTasks(client: Client): Promise<Client> {
+  if (!client.wealthboxId) return client;
+
+  let completedTasks: Array<{ name: string; completedAt: string; description?: string }> = [];
+  try {
+    const tasks = await getCompletedTasksForContact(client.wealthboxId);
+    completedTasks = tasks
+      .filter(task => task.completed_at) // Only include tasks with completion date
+      .slice(0, 20) // Limit to most recent 20 tasks
+      .map(task => ({
+        name: task.name,
+        completedAt: task.completed_at!,
+        description: task.description
+      }));
+  } catch (error) {
+    console.error(`Failed to fetch tasks for contact ${client.wealthboxId}:`, error);
+  }
+
+  return {
+    ...client,
+    completedTasks
+  };
+}
+
+// Legacy function for backwards compatibility (now just calls fast version)
+export async function mapWealthboxToFFOClient(contact: WealthboxContact): Promise<Client> {
+  return mapWealthboxToFFOClientFast(contact);
 }
 
 export function prepareScoreForWealthbox(

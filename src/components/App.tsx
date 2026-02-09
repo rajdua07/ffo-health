@@ -5,7 +5,7 @@ import {
   loadData, saveData, calcScore, dimAvg, getStatus, sColor, getFee, fmtM, timeAgo,
   getNextAnniversary, canScore, canEdit, canExport, canViewAllAdvisors, filterByAdvisor,
   getReferralSources, syncFromWealthbox, pushScoreToWealthbox, testWealthboxConnection,
-  importNewClientsFromWealthbox,
+  importNewClientsFromWealthbox, enrichClientsWithTasks,
   METRICS, DIMENSIONS, DIM_WEIGHTS, MO, TIERS, ADVISORS, WOW_TYPES, REFERRAL_SOURCES,
   CADENCE_DAYS, TIER_REVENUE, DEFAULT_USERS,
   DEFAULT_CLIENTS, DEFAULT_SCORES, DEFAULT_WOWS, DEFAULT_REFERRALS
@@ -599,7 +599,7 @@ function ActivityTab({ clients, scores, wows, darkMode }: { clients: Client[]; s
 }
 
 // ===== SETTINGS =====
-function SettingsTab({ settings, onSave, onSync, onImport, darkMode }: { settings: Settings; onSave: (s: Settings) => void; onSync: () => void; onImport: (clientIds: string[]) => Promise<number>; darkMode?: boolean }) {
+function SettingsTab({ settings, onSave, onSync, onImport, darkMode }: { settings: Settings; onSave: (s: Settings) => void; onSync: () => void; onImport: (clients: Client[]) => Promise<number>; darkMode?: boolean }) {
   const [sources, setSources] = useState<string[]>(settings.referralSources || REFERRAL_SOURCES);
   const [newSource, setNewSource] = useState("");
   const [wbEnabled, setWbEnabled] = useState(settings.wealthboxEnabled || false);
@@ -679,10 +679,18 @@ function SettingsTab({ settings, onSave, onSync, onImport, darkMode }: { setting
   const handleImportConfirm = async (selectedIds: string[]) => {
     setImportDialog({ open: false, clients: [] });
     setImporting(true);
-    setImportStatus("Importing...");
+    setImportStatus("Enriching with tasks...");
     try {
-      const count = await onImport(selectedIds);
-      setImportStatus(`✓ Imported ${count} client${count === 1 ? '' : 's'}!`);
+      // First, filter to selected clients
+      const selectedClients = importDialog.clients.filter(c => selectedIds.includes(c.id));
+
+      // Then enrich them with completed tasks (this is slower but avoids rate limiting)
+      const enrichedClients = await enrichClientsWithTasks(selectedClients);
+
+      setImportStatus("Importing...");
+      // Finally, import the enriched clients
+      const count = await onImport(enrichedClients);
+      setImportStatus(`✓ Imported ${count} client${count === 1 ? '' : 's'} with task history!`);
     } catch (error) {
       setImportStatus(`✗ Import failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
@@ -1160,11 +1168,8 @@ export default function App() {
     }
   };
 
-  const handleWealthboxImport = async (clientIds: string[]): Promise<number> => {
+  const handleWealthboxImport = async (selectedClients: Client[]): Promise<number> => {
     try {
-      const { newClients } = await importNewClientsFromWealthbox(data.clients);
-      // Filter to only selected clients
-      const selectedClients = newClients.filter(c => clientIds.includes(c.id));
       if (selectedClients.length > 0) {
         const mergedClients = [...data.clients, ...selectedClients];
         await persist({ ...data, clients: mergedClients });

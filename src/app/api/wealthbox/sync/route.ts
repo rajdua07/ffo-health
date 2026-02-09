@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getWealthboxContacts, mapWealthboxToFFOClient, shouldIncludeContact } from '@/lib/wealthbox';
+import { getWealthboxContacts, mapWealthboxToFFOClientFast, shouldIncludeContact } from '@/lib/wealthbox';
 
 export async function GET() {
   try {
@@ -8,17 +8,16 @@ export async function GET() {
     // Filter by tags first (before mapping)
     const filteredContacts = contacts.filter(contact => shouldIncludeContact(contact));
 
-    // Map contacts to clients (async now because we fetch tasks)
-    const clientPromises = filteredContacts.map(contact => mapWealthboxToFFOClient(contact));
-    const allClients = await Promise.all(clientPromises);
-
-    // Filter out contacts with no valid name (Unknown or empty)
-    const clients = allClients.filter(client => {
-      const hasValidName = client.name &&
-                          client.name.trim() !== '' &&
-                          client.name !== 'Unknown';
-      return hasValidName;
-    });
+    // Map contacts to clients (fast version without tasks for dialog display)
+    const clients = filteredContacts
+      .map(contact => mapWealthboxToFFOClientFast(contact))
+      // Filter out contacts with no valid name (Unknown or empty)
+      .filter(client => {
+        const hasValidName = client.name &&
+                            client.name.trim() !== '' &&
+                            client.name !== 'Unknown';
+        return hasValidName;
+      });
 
     return NextResponse.json({
       success: true,
