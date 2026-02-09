@@ -31,7 +31,7 @@ async function wealthboxFetch(endpoint: string, options: RequestInit = {}) {
   const response = await fetch(url, {
     ...options,
     headers: {
-      'Authorization': `Bearer ${WEALTHBOX_API_KEY}`,
+      'ACCESS_TOKEN': WEALTHBOX_API_KEY || '',
       'Content-Type': 'application/json',
       ...options.headers,
     },
