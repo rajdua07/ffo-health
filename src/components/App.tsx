@@ -2,13 +2,17 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   AppData, Client, Score, Wow, Referral, ClientStat, UserProfile, Settings,
+  NPSFeedback, Pod, ExecSummary, ScoringConfig,
   loadData, saveData, calcScore, dimAvg, getStatus, sColor, getFee, fmtM, timeAgo,
-  getNextAnniversary, canScore, canEdit, canExport, canViewAllAdvisors, filterByAdvisor,
-  getReferralSources, syncFromWealthbox, pushScoreToWealthbox, testWealthboxConnection,
-  importNewClientsFromWealthbox, enrichClientsWithTasks,
-  METRICS, DIMENSIONS, DIM_WEIGHTS, MO, TIERS, ADVISORS, WOW_TYPES, REFERRAL_SOURCES,
-  CADENCE_DAYS, TIER_REVENUE, DEFAULT_USERS,
-  DEFAULT_CLIENTS, DEFAULT_SCORES, DEFAULT_WOWS, DEFAULT_REFERRALS
+  getNextAnniversary, canScore, canEdit, canExport, canViewAllAdvisors, canConfigureScoring,
+  filterByAdvisor, getReferralSources,
+  syncFromWealthbox, pushScoreToWealthbox, testWealthboxConnection,
+  importNewClientsFromWealthbox, enrichClientsWithTasks, fetchExecSummary, parseCSVClients,
+  npsCategory, npsColor, latestNPSForClient, getPods, getPodForClient,
+  getThresholds, getEffectiveWeights,
+  METRICS, METRIC_COUNT, DIMENSIONS, DIM_WEIGHTS, MO, TIERS, ADVISORS, WOW_TYPES,
+  REFERRAL_SOURCES, NPS_SOURCES, CADENCE_DAYS, TIER_REVENUE, DEFAULT_USERS,
+  DEFAULT_CLIENTS, DEFAULT_SCORES, DEFAULT_WOWS, DEFAULT_REFERRALS, DEFAULT_NPS, DEFAULT_PODS
 } from "@/lib/data";
 import { exportClientPDF, exportPortfolioPDF } from "@/lib/pdf";
 
@@ -16,12 +20,12 @@ import { exportClientPDF, exportPortfolioPDF } from "@/lib/pdf";
 function Badge({ status, sm }: { status: string | null; sm?: boolean }) {
   const c = sColor(status);
   return <span className={`${sm ? "text-xs px-2 py-0.5" : "text-sm px-3 py-1"} rounded-full font-semibold inline-block`}
-    style={{ background: c.bg, color: c.tx, border: `1px solid ${c.bd}` }}>{status || "—"}</span>;
+    style={{ background: c.bg, color: c.tx, border: `1px solid ${c.bd}` }}>{status || "\u2014"}</span>;
 }
 
-function ScoreCircle({ score, size = 44 }: { score: number | null; size?: number }) {
-  if (score == null) return <div style={{ width: size, height: size }} className="rounded-full bg-gray-100 flex items-center justify-center text-gray-400 text-xs">—</div>;
-  const c = sColor(getStatus(score));
+function ScoreCircle({ score, size = 44, settings }: { score: number | null; size?: number; settings?: Settings }) {
+  if (score == null) return <div style={{ width: size, height: size }} className="rounded-full bg-gray-100 flex items-center justify-center text-gray-400 text-xs">{"\u2014"}</div>;
+  const c = sColor(getStatus(score, settings));
   return <div style={{ width: size, height: size, background: c.bg, border: `2px solid ${c.bd}` }} className="rounded-full flex items-center justify-center font-bold">
     <span style={{ color: c.tx, fontSize: size * 0.35 }}>{score.toFixed(1)}</span>
   </div>;
@@ -38,10 +42,10 @@ function MiniBar({ value }: { value: number | null }) {
 }
 
 function TrendArrow({ cur, prev }: { cur: number | null; prev: number | null }) {
-  if (cur == null || prev == null) return <span className="text-gray-300 text-xs">—</span>;
-  if (cur > prev) return <span className="text-green-600 text-sm font-bold">▲</span>;
-  if (cur < prev) return <span className="text-red-500 text-sm font-bold">▼</span>;
-  return <span className="text-gray-400 text-sm">●</span>;
+  if (cur == null || prev == null) return <span className="text-gray-300 text-xs">{"\u2014"}</span>;
+  if (cur > prev) return <span className="text-green-600 text-sm font-bold">{"\u25B2"}</span>;
+  if (cur < prev) return <span className="text-red-500 text-sm font-bold">{"\u25BC"}</span>;
+  return <span className="text-gray-400 text-sm">{"\u25CF"}</span>;
 }
 
 function Sel({ label, value, onChange, options, darkMode }: { label?: string; value: string; onChange: (v: string) => void; options: string[]; darkMode?: boolean }) {
@@ -142,7 +146,7 @@ function ImportDialog({
                     {client.name}
                   </div>
                   <div className={`text-xs mt-1 ${darkMode ? "text-gray-400" : "text-gray-600"}`}>
-                    {client.tier} • {client.leadAdvisor} • {fmtM(client.monthlyFee)}/mo
+                    {client.tier} {"\u2022"} {client.leadAdvisor} {"\u2022"} {fmtM(client.monthlyFee)}/mo
                   </div>
                   {client.referralSource && (
                     <div className={`text-xs mt-0.5 ${darkMode ? "text-gray-500" : "text-gray-500"}`}>
@@ -186,18 +190,23 @@ function ImportDialog({
 
 // ===== TABS =====
 const TABS = [
-  { id: "overview", label: "Overview" }, { id: "ranking", label: "Ranking" },
-  { id: "advisors", label: "Advisors" }, { id: "compliance", label: "Compliance" },
+  { id: "overview", label: "Overview" }, { id: "baseline", label: "Baseline" },
+  { id: "ranking", label: "Ranking" },
+  { id: "advisors", label: "Advisors" }, { id: "pods", label: "Pods" },
+  { id: "compliance", label: "Compliance" },
   { id: "alerts", label: "Alerts" }, { id: "revenue", label: "Revenue" },
   { id: "referrals", label: "Referrals" }, { id: "activity", label: "Activity" },
+  { id: "nps", label: "NPS" },
   { id: "settings", label: "Settings" },
 ];
 
-function TabNav({ active, onChange, alertCount }: { active: string; onChange: (t: string) => void; alertCount: number }) {
-  return <div className="flex gap-0.5 sm:gap-1 overflow-x-auto pb-1 mb-4 border-b border-gray-200 -mx-3 sm:mx-0 px-3 sm:px-0">
+function TabNav({ active, onChange, alertCount, darkMode }: { active: string; onChange: (t: string) => void; alertCount: number; darkMode?: boolean }) {
+  return <div className={`flex gap-0.5 sm:gap-1 overflow-x-auto pb-1 mb-4 border-b -mx-3 sm:mx-0 px-3 sm:px-0 ${darkMode ? "border-slate-700" : "border-gray-200"}`}>
     {TABS.map(t => (
       <button key={t.id} onClick={() => onChange(t.id)}
-        className={`px-2 sm:px-3 py-2 text-xs sm:text-sm font-medium rounded-t-lg whitespace-nowrap ${active === t.id ? "bg-white border border-b-white border-gray-200 text-blue-600 -mb-px" : "text-gray-500 hover:text-gray-700 hover:bg-gray-50"}`}>
+        className={`px-2 sm:px-3 py-2 text-xs sm:text-sm font-medium rounded-t-lg whitespace-nowrap ${active === t.id
+          ? darkMode ? "bg-slate-800 border border-b-slate-800 border-slate-600 text-blue-400 -mb-px" : "bg-white border border-b-white border-gray-200 text-blue-600 -mb-px"
+          : darkMode ? "text-gray-400 hover:text-gray-200 hover:bg-slate-700" : "text-gray-500 hover:text-gray-700 hover:bg-gray-50"}`}>
         {t.label}
         {t.id === "alerts" && alertCount > 0 && <span className="ml-1 px-1.5 py-0.5 text-[10px] rounded-full bg-red-500 text-white font-bold">{alertCount}</span>}
       </button>
@@ -206,26 +215,40 @@ function TabNav({ active, onChange, alertCount }: { active: string; onChange: (t
 }
 
 // ===== useClientStats =====
-function useClientStats(clients: Client[], scores: Score[]): ClientStat[] {
+function useClientStats(clients: Client[], scores: Score[], npsFeedback?: NPSFeedback[], settings?: Settings): ClientStat[] {
   return useMemo(() => (clients || []).map(client => {
     const cs = (scores || []).filter(s => s.clientId === client.id).sort((a, b) => (b.year * 12 + b.month) - (a.year * 12 + a.month));
     const latest = cs[0] || null; const prev = cs[1] || null;
     const latestScore = latest ? calcScore(latest.scores) : null;
     const prevScore = prev ? calcScore(prev.scores) : null;
-    const status = getStatus(latestScore);
-    const prevStatus = prev ? getStatus(calcScore(prev.scores)) : null;
+    const status = getStatus(latestScore, settings);
+    const prevStatus = prev ? getStatus(calcScore(prev.scores), settings) : null;
     const dims = latest ? DIMENSIONS.map(d => ({ name: d, avg: dimAvg(latest.scores, d) })) : [];
     const dropped = !!(prevStatus && status && prevStatus === "HEALTHY" && (status === "WATCH" || status === "AT RISK"));
     const anniv = getNextAnniversary(client.onboardDate);
-    return { ...client, monthlyFee: getFee(client), latestScore, prevScore, status, prevStatus, latest, dims, scoreCount: cs.length, lastScoredTs: latest?.ts || null, dropped, anniversaryDays: anniv?.days ?? null, nextAnniversary: anniv?.date ?? null };
-  }), [clients, scores]);
+    const latestNPS = latestNPSForClient(npsFeedback || [], client.id);
+    return { ...client, monthlyFee: getFee(client), latestScore, prevScore, status, prevStatus, latest, dims, scoreCount: cs.length, lastScoredTs: latest?.ts || null, dropped, anniversaryDays: anniv?.days ?? null, nextAnniversary: anniv?.date ?? null, latestNPS };
+  }), [clients, scores, npsFeedback, settings]);
 }
 
 // ===== OVERVIEW =====
-function OverviewTab({ stats, onSelect, onAdd, user, darkMode }: { stats: ClientStat[]; onSelect: (id: string) => void; onAdd: () => void; user?: UserProfile; darkMode?: boolean }) {
+function OverviewTab({ stats, onSelect, onAdd, user, darkMode, settings }: { stats: ClientStat[]; onSelect: (id: string) => void; onAdd: () => void; user?: UserProfile; darkMode?: boolean; settings?: Settings }) {
   const [search, setSearch] = useState(""); const [fT, setFT] = useState("All"); const [fA, setFA] = useState("All"); const [fS, setFS] = useState("All");
+  const [fH, setFH] = useState("All");
   const [sortBy, setSortBy] = useState("Score (Low to High)");
-  const filtered = stats.filter(c => (fT === "All" || c.tier === fT) && (fA === "All" || c.leadAdvisor === fA) && (fS === "All" || c.status === fS) && (!search || c.name.toLowerCase().includes(search.toLowerCase())));
+  const { atRisk: atRiskThresh, watch: watchThresh } = getThresholds(settings);
+
+  const filtered = stats.filter(c => {
+    if (fT !== "All" && c.tier !== fT) return false;
+    if (fA !== "All" && c.leadAdvisor !== fA) return false;
+    if (fS !== "All" && c.status !== fS) return false;
+    if (search && !c.name.toLowerCase().includes(search.toLowerCase())) return false;
+    // Health score range filter
+    if (fH === "At Risk Only" && (c.latestScore == null || c.latestScore >= atRiskThresh)) return false;
+    if (fH === "Watch Only" && (c.latestScore == null || c.latestScore < atRiskThresh || c.latestScore >= watchThresh)) return false;
+    if (fH === "Healthy Only" && (c.latestScore == null || c.latestScore < watchThresh)) return false;
+    return true;
+  });
   const scored = filtered.filter(c => c.latestScore != null);
   const avg = scored.length ? scored.reduce((s, c) => s + (c.latestScore || 0), 0) / scored.length : 0;
   const h = scored.filter(c => c.status === "HEALTHY").length;
@@ -235,7 +258,7 @@ function OverviewTab({ stats, onSelect, onAdd, user, darkMode }: { stats: Client
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
       <StatCard label="Clients" value={filtered.length} darkMode={darkMode} />
       <StatCard label="Monthly Rev" value={fmtM(filtered.reduce((s, c) => s + c.monthlyFee, 0))} color="#1B2A4A" darkMode={darkMode} />
-      <StatCard label="Avg Score" value={avg.toFixed(1)} color={sColor(getStatus(avg)).tx} darkMode={darkMode} />
+      <StatCard label="Avg Score" value={avg.toFixed(1)} color={sColor(getStatus(avg, settings)).tx} darkMode={darkMode} />
       <StatCard label="Healthy" value={h} color="#166534" sub={scored.length ? `${Math.round(h / scored.length * 100)}%` : ""} darkMode={darkMode} />
       <StatCard label="Watch" value={w} color="#854d0e" sub={scored.length ? `${Math.round(w / scored.length * 100)}%` : ""} darkMode={darkMode} />
       <StatCard label="At Risk" value={r} color="#991b1b" sub={scored.length ? `${Math.round(r / scored.length * 100)}%` : ""} darkMode={darkMode} />
@@ -247,6 +270,7 @@ function OverviewTab({ stats, onSelect, onAdd, user, darkMode }: { stats: Client
         <Sel label="Tier" value={fT} onChange={setFT} options={["All", ...TIERS]} darkMode={darkMode} />
         {canViewAllAdvisors(user) && <Sel label="Advisor" value={fA} onChange={setFA} options={["All", ...ADVISORS]} darkMode={darkMode} />}
         <Sel label="Status" value={fS} onChange={setFS} options={["All", "HEALTHY", "WATCH", "AT RISK"]} darkMode={darkMode} />
+        <Sel label="Score Range" value={fH} onChange={setFH} options={["All", "At Risk Only", "Watch Only", "Healthy Only"]} darkMode={darkMode} />
         <Sel label="Sort By" value={sortBy} onChange={setSortBy} options={["Score (Low to High)", "Score (High to Low)", "Name (A-Z)", "Name (Z-A)", "Revenue (High to Low)", "Revenue (Low to High)", "Onboard Date (Newest)", "Onboard Date (Oldest)"]} darkMode={darkMode} />
       </div>
       {canEdit(user) && <button onClick={onAdd} className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-blue-700 w-full sm:w-auto">+ Add Client</button>}
@@ -273,12 +297,12 @@ function OverviewTab({ stats, onSelect, onAdd, user, darkMode }: { stats: Client
                 <span className={`text-xs font-medium ${darkMode ? "text-gray-400" : "text-gray-400"}`}>{fmtM(c.monthlyFee)}/mo</span>
               </div>
             </div>
-            <ScoreCircle score={c.latestScore} size={42} />
+            <ScoreCircle score={c.latestScore} size={42} settings={settings} />
           </div>
           <div className="flex items-center justify-between">
             <Badge status={c.status} sm />
             <div className="flex items-center gap-2">
-              {c.anniversaryDays != null && c.anniversaryDays <= 30 && <span className="text-xs px-2 py-0.5 rounded bg-purple-100 text-purple-700 font-medium">🎂 {c.anniversaryDays}d</span>}
+              {c.anniversaryDays != null && c.anniversaryDays <= 30 && <span className="text-xs px-2 py-0.5 rounded bg-purple-100 text-purple-700 font-medium">{"🎂"} {c.anniversaryDays}d</span>}
               <TrendArrow cur={c.latestScore} prev={c.prevScore} />
             </div>
           </div>
@@ -288,8 +312,66 @@ function OverviewTab({ stats, onSelect, onAdd, user, darkMode }: { stats: Client
   </div>;
 }
 
+// ===== BASELINE SCORING WORKFLOW =====
+function BaselineTab({ stats, onScoreClient, darkMode, settings }: { stats: ClientStat[]; onScoreClient: (id: string) => void; darkMode?: boolean; settings?: Settings }) {
+  const [filterUnscored, setFilterUnscored] = useState(false);
+  const displayed = filterUnscored ? stats.filter(c => c.scoreCount === 0) : stats;
+  const totalClients = stats.length;
+  const baselinedCount = stats.filter(c => c.scoreCount > 0).length;
+  const pct = totalClients > 0 ? Math.round((baselinedCount / totalClients) * 100) : 0;
+
+  return <div className="space-y-5">
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <StatCard label="Total Clients" value={totalClients} darkMode={darkMode} />
+      <StatCard label="Baselined" value={baselinedCount} color="#166534" darkMode={darkMode} />
+      <StatCard label="Remaining" value={totalClients - baselinedCount} color="#991b1b" darkMode={darkMode} />
+      <StatCard label="Progress" value={`${pct}%`} color="#1B2A4A" darkMode={darkMode} />
+    </div>
+
+    {/* Progress Bar */}
+    <div className={`rounded-xl border p-4 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
+      <div className="flex justify-between items-center mb-2">
+        <span className={`text-sm font-semibold ${darkMode ? "text-gray-300" : "text-gray-700"}`}>Baseline Progress: {baselinedCount} of {totalClients} clients</span>
+        <span className={`text-sm font-bold ${pct === 100 ? "text-green-600" : darkMode ? "text-gray-300" : "text-gray-700"}`}>{pct}%</span>
+      </div>
+      <div className={`h-4 rounded-full overflow-hidden ${darkMode ? "bg-slate-700" : "bg-gray-100"}`}>
+        <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: pct === 100 ? "#22c55e" : "#3b82f6" }} />
+      </div>
+    </div>
+
+    <div className="flex gap-2 items-center">
+      <label className={`flex items-center gap-2 text-sm ${darkMode ? "text-gray-300" : "text-gray-700"}`}>
+        <input type="checkbox" checked={filterUnscored} onChange={e => setFilterUnscored(e.target.checked)} className="rounded" />
+        No baseline yet only
+      </label>
+    </div>
+
+    <div className={`rounded-xl border p-4 sm:p-5 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
+      <h3 className={`text-sm font-semibold mb-3 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>CLIENT BASELINE STATUS</h3>
+      {displayed.length === 0 ? <p className={`text-sm text-center py-4 ${darkMode ? "text-gray-400" : "text-gray-400"}`}>All clients have been baselined!</p> :
+        <div className="space-y-1">
+          {displayed.map(c => (
+            <div key={c.id} className={`flex items-center gap-3 py-2 px-2 rounded-lg ${darkMode ? "hover:bg-slate-700" : "hover:bg-gray-50"}`}>
+              <div className={`w-44 truncate text-sm font-medium ${darkMode ? "text-gray-300" : "text-gray-700"}`}>{c.name}</div>
+              <span className={`text-xs px-2 py-0.5 rounded ${darkMode ? "bg-slate-700 text-gray-400" : "bg-gray-100 text-gray-500"}`}>{c.tier}</span>
+              <span className={`text-xs w-14 ${darkMode ? "text-gray-400" : "text-gray-400"}`}>{c.leadAdvisor}</span>
+              {c.scoreCount > 0
+                ? <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-green-100 text-green-700">Scored ({c.scoreCount}x)</span>
+                : <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-red-100 text-red-700">No baseline</span>}
+              {c.baselineCompletedAt && <span className={`text-xs ${darkMode ? "text-gray-500" : "text-gray-400"}`}>{timeAgo(c.baselineCompletedAt)}</span>}
+              <div className="flex-1" />
+              <button onClick={() => onScoreClient(c.id)} className="bg-blue-600 text-white px-3 py-1 rounded-lg text-xs font-medium hover:bg-blue-700">
+                {c.scoreCount > 0 ? "Re-score" : "Score"}
+              </button>
+            </div>
+          ))}
+        </div>}
+    </div>
+  </div>;
+}
+
 // ===== RANKING =====
-function RankingTab({ clients, scores, onSelect, darkMode }: { clients: Client[]; scores: Score[]; onSelect: (id: string) => void; darkMode?: boolean }) {
+function RankingTab({ clients, scores, onSelect, darkMode, settings }: { clients: Client[]; scores: Score[]; onSelect: (id: string) => void; darkMode?: boolean; settings?: Settings }) {
   const [period, setPeriod] = useState("latest"); const [sortDir, setSortDir] = useState("asc"); const [fT, setFT] = useState("All"); const [fA, setFA] = useState("All");
   const ranked = useMemo(() => {
     const now = new Date(); const tY = now.getFullYear(); const tM = now.getMonth();
@@ -310,25 +392,25 @@ function RankingTab({ clients, scores, onSelect, darkMode }: { clients: Client[]
         <Sel label="Tier" value={fT} onChange={setFT} options={["All", ...TIERS]} darkMode={darkMode} />
         <Sel label="Advisor" value={fA} onChange={setFA} options={["All", ...ADVISORS]} darkMode={darkMode} />
         <Sel label="Period" value={period} onChange={setPeriod} options={["latest", "3m", "ytd"]} darkMode={darkMode} />
-        <button onClick={() => setSortDir(d => d === "asc" ? "desc" : "asc")} className={`border rounded-lg px-3 py-1.5 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200 hover:bg-slate-600" : "border-gray-200 bg-white hover:bg-gray-50"}`}>{sortDir === "asc" ? "↑ Worst" : "↓ Best"}</button>
+        <button onClick={() => setSortDir(d => d === "asc" ? "desc" : "asc")} className={`border rounded-lg px-3 py-1.5 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200 hover:bg-slate-600" : "border-gray-200 bg-white hover:bg-gray-50"}`}>{sortDir === "asc" ? "\u2191 Worst" : "\u2193 Best"}</button>
       </div>
     </div>
     {ranked.length === 0 ? <p className="text-sm text-gray-400 text-center py-6">No scored clients.</p> :
       <div className="space-y-1">{ranked.map((c, i) => {
-        const col = sColor(getStatus(c.avgScore)); const pct = ((c.avgScore || 0) / 10) * 100;
+        const col = sColor(getStatus(c.avgScore, settings)); const pct = ((c.avgScore || 0) / 10) * 100;
         return <div key={c.id} className={`flex items-center gap-2 group cursor-pointer rounded-lg px-1 py-1 ${darkMode ? "hover:bg-slate-700" : "hover:bg-gray-50"}`} onClick={() => onSelect(c.id)}>
           <div className={`w-5 text-xs text-right font-mono shrink-0 ${darkMode ? "text-gray-500" : "text-gray-400"}`}>{i + 1}</div>
           <div className={`w-36 shrink-0 truncate text-sm font-medium group-hover:text-blue-600 ${darkMode ? "text-gray-300" : "text-gray-700"}`}>{c.name}</div>
           <div className="flex-1 relative h-5"><div className={`absolute inset-0 rounded ${darkMode ? "bg-slate-700" : "bg-gray-50"}`} /><div className="absolute top-1 bottom-1 rounded-r-md" style={{ width: `${pct}%`, background: col.bd, minWidth: 4 }} /></div>
           <span className="w-10 text-right text-sm font-bold shrink-0" style={{ color: col.tx }}>{(c.avgScore || 0).toFixed(1)}</span>
-          <div className="w-16 shrink-0"><Badge status={getStatus(c.avgScore)} sm /></div>
+          <div className="w-16 shrink-0"><Badge status={getStatus(c.avgScore, settings)} sm /></div>
         </div>;
       })}</div>}
   </div>;
 }
 
 // ===== ADVISORS =====
-function AdvisorTab({ stats, darkMode }: { stats: ClientStat[]; darkMode?: boolean }) {
+function AdvisorTab({ stats, darkMode, settings }: { stats: ClientStat[]; darkMode?: boolean; settings?: Settings }) {
   const data = useMemo(() => ADVISORS.map(adv => {
     const cs = stats.filter(c => c.leadAdvisor === adv); const scored = cs.filter(c => c.latestScore != null);
     const avg = scored.length ? scored.reduce((s, c) => s + (c.latestScore || 0), 0) / scored.length : 0;
@@ -341,7 +423,7 @@ function AdvisorTab({ stats, darkMode }: { stats: ClientStat[]; darkMode?: boole
   return <div className="grid gap-4 sm:grid-cols-2">
     {data.map(a => (
       <div key={a.adv} className={`rounded-xl border p-4 sm:p-5 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
-        <div className="flex items-center justify-between mb-4"><h3 className={`text-lg font-bold ${darkMode ? "text-gray-100" : ""}`} style={{ color: darkMode ? undefined : "#1B2A4A" }}>{a.adv}</h3><ScoreCircle score={a.avg} size={52} /></div>
+        <div className="flex items-center justify-between mb-4"><h3 className={`text-lg font-bold ${darkMode ? "text-gray-100" : ""}`} style={{ color: darkMode ? undefined : "#1B2A4A" }}>{a.adv}</h3><ScoreCircle score={a.avg} size={52} settings={settings} /></div>
         <div className="grid grid-cols-3 gap-2 mb-4">
           <div className="text-center p-2 rounded-lg bg-green-50"><div className="text-xl font-bold text-green-800">{a.h}</div><div className="text-[10px] text-green-600">Healthy</div></div>
           <div className="text-center p-2 rounded-lg bg-amber-50"><div className="text-xl font-bold text-amber-800">{a.w}</div><div className="text-[10px] text-amber-600">Watch</div></div>
@@ -356,6 +438,79 @@ function AdvisorTab({ stats, darkMode }: { stats: ClientStat[]; darkMode?: boole
         {a.dims.map(d => <div key={d.name} className="flex items-center gap-2"><span className={`text-xs w-24 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{d.name}</span><MiniBar value={d.avg} /></div>)}
       </div>
     ))}
+  </div>;
+}
+
+// ===== PODS =====
+function PodsTab({ stats, onSelect, darkMode, settings }: { stats: ClientStat[]; onSelect: (id: string) => void; darkMode?: boolean; settings?: Settings }) {
+  const [expandedPod, setExpandedPod] = useState<string | null>(null);
+  const pods = getPods(settings);
+
+  const podData = useMemo(() => pods.map(pod => {
+    const podClients = stats.filter(c => {
+      const cp = getPodForClient(c, settings);
+      return cp?.id === pod.id;
+    });
+    const scored = podClients.filter(c => c.latestScore != null);
+    const avgScore = scored.length ? scored.reduce((s, c) => s + (c.latestScore || 0), 0) / scored.length : 0;
+    const totalMRR = podClients.reduce((s, c) => s + c.monthlyFee, 0);
+    const atRiskRev = podClients.filter(c => c.status === "AT RISK" || c.status === "WATCH").reduce((s, c) => s + c.monthlyFee, 0);
+    const hCount = scored.filter(c => c.status === "HEALTHY").length;
+    const wCount = scored.filter(c => c.status === "WATCH").length;
+    const rCount = scored.filter(c => c.status === "AT RISK").length;
+    const overallHealth = scored.length === 0 ? null : avgScore >= (getThresholds(settings).watch) ? "HEALTHY" : avgScore >= (getThresholds(settings).atRisk) ? "WATCH" : "AT RISK";
+    return { pod, clients: podClients, scored: scored.length, avgScore, totalMRR, atRiskRev, hCount, wCount, rCount, overallHealth };
+  }), [stats, pods, settings]);
+
+  return <div className="space-y-4">
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <StatCard label="Total Pods" value={pods.length} darkMode={darkMode} />
+      <StatCard label="Total MRR" value={fmtM(podData.reduce((s, p) => s + p.totalMRR, 0))} color="#1B2A4A" darkMode={darkMode} />
+      <StatCard label="Avg Score" value={(() => { const allScored = podData.filter(p => p.scored > 0); return allScored.length ? (allScored.reduce((s, p) => s + p.avgScore, 0) / allScored.length).toFixed(1) : "0.0"; })()} darkMode={darkMode} />
+      <StatCard label="Rev at Risk" value={fmtM(podData.reduce((s, p) => s + p.atRiskRev, 0))} color="#991b1b" darkMode={darkMode} />
+    </div>
+
+    <div className="grid gap-4 sm:grid-cols-2">
+      {podData.map(pd => {
+        const healthCol = pd.overallHealth === "HEALTHY" ? { border: "border-green-300", bg: darkMode ? "bg-green-900/20" : "bg-green-50" }
+          : pd.overallHealth === "WATCH" ? { border: "border-amber-300", bg: darkMode ? "bg-amber-900/20" : "bg-amber-50" }
+          : pd.overallHealth === "AT RISK" ? { border: "border-red-300", bg: darkMode ? "bg-red-900/20" : "bg-red-50" }
+          : { border: darkMode ? "border-slate-700" : "border-gray-200", bg: "" };
+        return <div key={pd.pod.id} className={`rounded-xl border-2 ${healthCol.border} p-4 sm:p-5 ${darkMode ? "bg-slate-800" : "bg-white"}`}>
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h3 className={`text-lg font-bold ${darkMode ? "text-gray-100" : "text-gray-900"}`}>{pd.pod.name}</h3>
+              <div className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>
+                Advisors: {pd.pod.advisors.join(", ")}{pd.pod.wpa ? ` | WPA: ${pd.pod.wpa}` : ""}
+              </div>
+            </div>
+            <ScoreCircle score={pd.scored > 0 ? pd.avgScore : null} size={48} settings={settings} />
+          </div>
+          <div className="grid grid-cols-3 gap-2 mb-3">
+            <div className="text-center p-1.5 rounded-lg bg-green-50"><div className="text-lg font-bold text-green-800">{pd.hCount}</div><div className="text-[10px] text-green-600">Healthy</div></div>
+            <div className="text-center p-1.5 rounded-lg bg-amber-50"><div className="text-lg font-bold text-amber-800">{pd.wCount}</div><div className="text-[10px] text-amber-600">Watch</div></div>
+            <div className="text-center p-1.5 rounded-lg bg-red-50"><div className="text-lg font-bold text-red-800">{pd.rCount}</div><div className="text-[10px] text-red-600">At Risk</div></div>
+          </div>
+          <div className="space-y-1 mb-3">
+            <div className="flex justify-between text-sm"><span className={darkMode ? "text-gray-400" : "text-gray-500"}>Clients</span><span className={`font-semibold ${darkMode ? "text-gray-200" : ""}`}>{pd.clients.length}</span></div>
+            <div className="flex justify-between text-sm"><span className={darkMode ? "text-gray-400" : "text-gray-500"}>Total MRR</span><span className={`font-semibold ${darkMode ? "text-gray-200" : ""}`}>{fmtM(pd.totalMRR)}/mo</span></div>
+            <div className="flex justify-between text-sm"><span className={darkMode ? "text-gray-400" : "text-gray-500"}>Rev at Risk</span><span className="font-semibold text-red-600">{fmtM(pd.atRiskRev)}</span></div>
+          </div>
+          <button onClick={() => setExpandedPod(expandedPod === pd.pod.id ? null : pd.pod.id)} className={`text-xs font-medium ${darkMode ? "text-blue-400 hover:text-blue-300" : "text-blue-600 hover:text-blue-800"}`}>
+            {expandedPod === pd.pod.id ? "Hide clients" : `Show ${pd.clients.length} clients`}
+          </button>
+          {expandedPod === pd.pod.id && <div className="mt-3 space-y-1 border-t pt-2">
+            {pd.clients.map(c => (
+              <div key={c.id} className={`flex items-center gap-2 py-1.5 px-2 rounded cursor-pointer ${darkMode ? "hover:bg-slate-700" : "hover:bg-gray-50"}`} onClick={() => onSelect(c.id)}>
+                <span className={`text-sm font-medium flex-1 truncate ${darkMode ? "text-gray-300" : "text-gray-700"}`}>{c.name}</span>
+                <span className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{fmtM(c.monthlyFee)}/mo</span>
+                <Badge status={c.status} sm />
+              </div>
+            ))}
+          </div>}
+        </div>;
+      })}
+    </div>
   </div>;
 }
 
@@ -409,41 +564,41 @@ function AlertsTab({ stats, onSelect, darkMode }: { stats: ClientStat[]; onSelec
 
   return <div className="space-y-4">
     {upcoming.length > 0 && <div className={`rounded-xl border-2 border-purple-300 p-5 ${darkMode ? "bg-slate-800" : "bg-white"}`}>
-      <h3 className="text-sm font-bold text-purple-700 mb-2">🎂 UPCOMING ANNIVERSARIES ({upcoming.length})</h3>
-      <p className="text-xs text-purple-500 mb-3">Client onboarding anniversaries within 30 days — trigger a wow moment!</p>
+      <h3 className="text-sm font-bold text-purple-700 mb-2">{"🎂"} UPCOMING ANNIVERSARIES ({upcoming.length})</h3>
+      <p className="text-xs text-purple-500 mb-3">Client onboarding anniversaries within 30 days -- trigger a wow moment!</p>
       {upcoming.map(c => (
         <div key={c.id} className={`flex items-center gap-3 py-2 px-2 rounded-lg cursor-pointer border-b border-purple-100 last:border-0 ${darkMode ? "hover:bg-purple-900/20" : "hover:bg-purple-50"}`} onClick={() => onSelect(c.id)}>
-          <div className="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center text-lg">🎂</div>
-          <div className="flex-1 min-w-0"><div className={`text-sm font-semibold truncate ${darkMode ? "text-gray-200" : ""}`}>{c.name}</div><div className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{c.tier} · {c.leadAdvisor} · {fmtM(c.monthlyFee)}/mo</div></div>
+          <div className="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center text-lg">{"🎂"}</div>
+          <div className="flex-1 min-w-0"><div className={`text-sm font-semibold truncate ${darkMode ? "text-gray-200" : ""}`}>{c.name}</div><div className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{c.tier} {"\u00B7"} {c.leadAdvisor} {"\u00B7"} {fmtM(c.monthlyFee)}/mo</div></div>
           <div className="text-right shrink-0"><div className="text-sm font-bold text-purple-700">{c.anniversaryDays === 0 ? "TODAY!" : `In ${c.anniversaryDays} days`}</div><div className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-400"}`}>{c.nextAnniversary}</div></div>
         </div>
       ))}
     </div>}
 
     {atRisk.length > 0 && <div className={`rounded-xl border-2 border-red-300 p-5 ${darkMode ? "bg-slate-800" : "bg-white"}`}>
-      <h3 className="text-sm font-bold text-red-700 mb-3">🚨 AT RISK ({atRisk.length})</h3>
+      <h3 className="text-sm font-bold text-red-700 mb-3">{"🚨"} AT RISK ({atRisk.length})</h3>
       {atRisk.map(c => (
         <div key={c.id} className={`flex items-center gap-3 py-2 px-2 rounded-lg cursor-pointer border-b border-red-100 last:border-0 ${darkMode ? "hover:bg-red-900/20" : "hover:bg-red-50"}`} onClick={() => onSelect(c.id)}>
           <ScoreCircle score={c.latestScore} size={36} />
-          <div className="flex-1 min-w-0"><div className={`text-sm font-semibold truncate ${darkMode ? "text-gray-200" : ""}`}>{c.name}</div><div className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{c.tier} · {fmtM(c.monthlyFee)}/mo</div></div>
+          <div className="flex-1 min-w-0"><div className={`text-sm font-semibold truncate ${darkMode ? "text-gray-200" : ""}`}>{c.name}</div><div className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{c.tier} {"\u00B7"} {fmtM(c.monthlyFee)}/mo</div></div>
           <div className="text-sm font-bold text-red-700">{fmtM(c.monthlyFee * 12)}/yr</div>
         </div>
       ))}
     </div>}
 
     {dropped.length > 0 && <div className={`rounded-xl border-2 border-amber-300 p-5 ${darkMode ? "bg-slate-800" : "bg-white"}`}>
-      <h3 className="text-sm font-bold text-amber-700 mb-3">⚠️ STATUS DROPPED ({dropped.length})</h3>
+      <h3 className="text-sm font-bold text-amber-700 mb-3">{"\u26A0\uFE0F"} STATUS DROPPED ({dropped.length})</h3>
       {dropped.map(c => (
         <div key={c.id} className={`flex items-center gap-3 py-2 cursor-pointer rounded-lg ${darkMode ? "hover:bg-amber-900/20" : "hover:bg-amber-50"}`} onClick={() => onSelect(c.id)}>
           <ScoreCircle score={c.latestScore} size={36} />
           <div className="flex-1"><div className={`text-sm font-semibold ${darkMode ? "text-gray-200" : ""}`}>{c.name}</div></div>
-          <Badge status={c.prevStatus} sm /><span className={darkMode ? "text-gray-500" : "text-gray-400"}>→</span><Badge status={c.status} sm />
+          <Badge status={c.prevStatus} sm /><span className={darkMode ? "text-gray-500" : "text-gray-400"}>{"\u2192"}</span><Badge status={c.status} sm />
         </div>
       ))}
     </div>}
 
     {watchList.length > 0 && <div className={`rounded-xl border border-amber-200 p-5 ${darkMode ? "bg-slate-800" : "bg-white"}`}>
-      <h3 className="text-sm font-bold text-amber-700 mb-3">👀 WATCH LIST ({watchList.length})</h3>
+      <h3 className="text-sm font-bold text-amber-700 mb-3">{"👀"} WATCH LIST ({watchList.length})</h3>
       {watchList.map(c => (
         <div key={c.id} className={`flex items-center gap-3 py-2 cursor-pointer rounded-lg ${darkMode ? "hover:bg-amber-900/20" : "hover:bg-amber-50"}`} onClick={() => onSelect(c.id)}>
           <ScoreCircle score={c.latestScore} size={36} />
@@ -453,12 +608,12 @@ function AlertsTab({ stats, onSelect, darkMode }: { stats: ClientStat[]; onSelec
       ))}
     </div>}
 
-    {atRisk.length + dropped.length + watchList.length + upcoming.length === 0 && <div className={`rounded-xl border border-green-200 p-8 text-center ${darkMode ? "bg-slate-800" : "bg-white"}`}><p className="text-green-700 font-semibold">✅ Portfolio healthy — no alerts!</p></div>}
+    {atRisk.length + dropped.length + watchList.length + upcoming.length === 0 && <div className={`rounded-xl border border-green-200 p-8 text-center ${darkMode ? "bg-slate-800" : "bg-white"}`}><p className="text-green-700 font-semibold">Portfolio healthy -- no alerts!</p></div>}
   </div>;
 }
 
 // ===== REVENUE =====
-function RevenueTab({ stats, darkMode }: { stats: ClientStat[]; darkMode?: boolean }) {
+function RevenueTab({ stats, darkMode, settings }: { stats: ClientStat[]; darkMode?: boolean; settings?: Settings }) {
   const totalRev = stats.reduce((s, c) => s + c.monthlyFee, 0);
   const byStatus = ["HEALTHY", "WATCH", "AT RISK", null].map(st => {
     const cs = stats.filter(c => c.status === st); const rev = cs.reduce((s, c) => s + c.monthlyFee, 0);
@@ -494,7 +649,7 @@ function RevenueTab({ stats, darkMode }: { stats: ClientStat[]; darkMode?: boole
   </div>;
 }
 
-// ===== REFERRALS (NEW) =====
+// ===== REFERRALS =====
 function ReferralsTab({ stats, referrals, onAddRef, referralSources, darkMode }: { stats: ClientStat[]; referrals: Referral[]; onAddRef: () => void; referralSources?: string[]; darkMode?: boolean }) {
   const sources = referralSources || REFERRAL_SOURCES;
   const bySrc = sources.map(src => {
@@ -537,7 +692,7 @@ function ReferralsTab({ stats, referrals, onAddRef, referralSources, darkMode }:
       <h3 className={`text-sm font-semibold mb-4 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>ACQUISITION CHANNELS</h3>
       {bySrc.map(s => (
         <div key={s.source} className="mb-3">
-          <div className="flex justify-between text-sm mb-1"><span className={`font-medium ${darkMode ? "text-gray-200" : ""}`}>{s.source}</span><span className={darkMode ? "text-gray-400" : "text-gray-500"}>{s.count} · {fmtM(s.rev)}/mo</span></div>
+          <div className="flex justify-between text-sm mb-1"><span className={`font-medium ${darkMode ? "text-gray-200" : ""}`}>{s.source}</span><span className={darkMode ? "text-gray-400" : "text-gray-500"}>{s.count} {"\u00B7"} {fmtM(s.rev)}/mo</span></div>
           <div className={`h-3 rounded-full overflow-hidden ${darkMode ? "bg-slate-700" : "bg-gray-100"}`}><div className="h-full bg-blue-400 rounded-full" style={{ width: `${stats.reduce((sum, c) => sum + c.monthlyFee, 0) ? s.rev / stats.reduce((sum, c) => sum + c.monthlyFee, 0) * 100 : 0}%` }} /></div>
         </div>
       ))}
@@ -550,7 +705,7 @@ function ReferralsTab({ stats, referrals, onAddRef, referralSources, darkMode }:
         const referred = stats.find(c => c.id === r.referredClientId);
         const stCls = r.status === "Active" ? "text-green-700 bg-green-100" : r.status === "Prospect" ? "text-amber-700 bg-amber-100" : "text-gray-600 bg-gray-100";
         return <div key={r.id} className={`flex items-center gap-3 py-2 border-b last:border-0 ${darkMode ? "border-slate-700" : "border-gray-100"}`}>
-          <div className="flex-1 min-w-0"><div className={`text-sm ${darkMode ? "text-gray-200" : ""}`}><span className="font-semibold">{referrer?.name || "?"}</span> → <span className="font-semibold">{referred?.name || "Prospect"}</span></div><div className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{r.date} · {r.notes}</div></div>
+          <div className="flex-1 min-w-0"><div className={`text-sm ${darkMode ? "text-gray-200" : ""}`}><span className="font-semibold">{referrer?.name || "?"}</span> {"\u2192"} <span className="font-semibold">{referred?.name || "Prospect"}</span></div><div className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{r.date} {"\u00B7"} {r.notes}</div></div>
           <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${stCls}`}>{r.status}</span>
           {r.revenueGenerated > 0 && <span className="text-sm font-bold text-green-700">{fmtM(r.revenueGenerated)}</span>}
         </div>;
@@ -560,13 +715,13 @@ function ReferralsTab({ stats, referrals, onAddRef, referralSources, darkMode }:
 }
 
 // ===== ACTIVITY =====
-function ActivityTab({ clients, scores, wows, darkMode }: { clients: Client[]; scores: Score[]; wows: Wow[]; darkMode?: boolean }) {
+function ActivityTab({ clients, scores, wows, darkMode, settings }: { clients: Client[]; scores: Score[]; wows: Wow[]; darkMode?: boolean; settings?: Settings }) {
   const events = useMemo(() => {
     const items: Array<{ type: string; ts: string; client: string; assessor?: string; score?: number | null; status?: string | null; month?: string; notes?: string; owner?: string; description?: string; wowType?: string }> = [];
-    (scores || []).forEach(s => { const c = (clients || []).find(x => x.id === s.clientId); items.push({ type: "score", ts: s.ts || `${s.year}-01-15T12:00:00Z`, client: c?.name || "?", assessor: s.assessor, score: calcScore(s.scores), status: getStatus(calcScore(s.scores)), month: `${MO[s.month]} ${s.year}`, notes: s.notes }); });
+    (scores || []).forEach(s => { const c = (clients || []).find(x => x.id === s.clientId); items.push({ type: "score", ts: s.ts || `${s.year}-01-15T12:00:00Z`, client: c?.name || "?", assessor: s.assessor, score: calcScore(s.scores), status: getStatus(calcScore(s.scores), settings), month: `${MO[s.month]} ${s.year}`, notes: s.notes }); });
     (wows || []).forEach(w => { const c = (clients || []).find(x => x.id === w.clientId); items.push({ type: "wow", ts: w.date + "T12:00:00Z", client: c?.name || "?", owner: w.owner, description: w.description, wowType: w.type }); });
     return items.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
-  }, [clients, scores, wows]);
+  }, [clients, scores, wows, settings]);
 
   return <div className={`rounded-xl border p-4 sm:p-5 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
     <h3 className={`text-sm font-semibold mb-4 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>ACTIVITY FEED</h3>
@@ -579,14 +734,14 @@ function ActivityTab({ clients, scores, wows, darkMode }: { clients: Client[]; s
             ? (darkMode ? "border-red-900 bg-red-950" : "border-red-100 bg-red-50")
             : (darkMode ? "border-slate-600 bg-slate-700" : "border-gray-100")
         }`}>
-          <div className="shrink-0">{e.type === "score" ? <ScoreCircle score={e.score ?? null} size={32} /> : <div className={`w-8 h-8 rounded-full ${darkMode ? "bg-amber-700" : "bg-amber-200"} flex items-center justify-center`}>⭐</div>}</div>
+          <div className="shrink-0">{e.type === "score" ? <ScoreCircle score={e.score ?? null} size={32} /> : <div className={`w-8 h-8 rounded-full ${darkMode ? "bg-amber-700" : "bg-amber-200"} flex items-center justify-center`}>{"⭐"}</div>}</div>
           <div className="flex-1 min-w-0">
             {e.type === "score" ? <>
-              <div className={`text-sm ${darkMode ? "text-gray-200" : ""}`}><span className="font-semibold">{e.assessor}</span> scored <span className="font-semibold">{e.client}</span> — {e.month}</div>
+              <div className={`text-sm ${darkMode ? "text-gray-200" : ""}`}><span className="font-semibold">{e.assessor}</span> scored <span className="font-semibold">{e.client}</span> {"\u2014"} {e.month}</div>
               <div className="flex items-center gap-2 mt-1"><span className={`text-sm font-bold ${darkMode ? "text-white" : ""}`} style={{ color: darkMode ? "#ffffff" : sColor(e.status ?? null).tx }}>{e.score?.toFixed(1)}</span><Badge status={e.status ?? null} sm /></div>
               {e.notes && <p className={`text-xs mt-1 ${darkMode ? "text-gray-400" : "text-gray-600"}`}>{e.notes}</p>}
             </> : <>
-              <div className={`text-sm ${darkMode ? "text-gray-200" : ""}`}><span className="font-semibold">{e.owner}</span> wow → <span className="font-semibold">{e.client}</span></div>
+              <div className={`text-sm ${darkMode ? "text-gray-200" : ""}`}><span className="font-semibold">{e.owner}</span> wow {"\u2192"} <span className="font-semibold">{e.client}</span></div>
               <p className={`text-xs mt-1 ${darkMode ? "text-gray-300" : "text-gray-700"}`}>{e.description}</p>
             </>}
           </div>
@@ -598,8 +753,133 @@ function ActivityTab({ clients, scores, wows, darkMode }: { clients: Client[]; s
   </div>;
 }
 
+// ===== NPS / FEEDBACK TAB =====
+function NPSTab({ stats, npsFeedback, onAddFeedback, darkMode }: {
+  stats: ClientStat[]; npsFeedback: NPSFeedback[]; onAddFeedback: (fb: NPSFeedback) => void; darkMode?: boolean;
+}) {
+  const [showForm, setShowForm] = useState(false);
+  const [fbClientId, setFbClientId] = useState("");
+  const [fbScore, setFbScore] = useState(8);
+  const [fbComment, setFbComment] = useState("");
+  const [fbSource, setFbSource] = useState<string>(NPS_SOURCES[0]);
+  const [fbAssessor, setFbAssessor] = useState("");
+
+  const sorted = useMemo(() => [...npsFeedback].sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime()), [npsFeedback]);
+  const avgNPS = npsFeedback.length ? npsFeedback.reduce((s, f) => s + f.npsScore, 0) / npsFeedback.length : 0;
+  const promoters = npsFeedback.filter(f => npsCategory(f.npsScore) === "Promoter").length;
+  const passives = npsFeedback.filter(f => npsCategory(f.npsScore) === "Passive").length;
+  const detractors = npsFeedback.filter(f => npsCategory(f.npsScore) === "Detractor").length;
+  const pctProm = npsFeedback.length ? Math.round(promoters / npsFeedback.length * 100) : 0;
+  const pctPass = npsFeedback.length ? Math.round(passives / npsFeedback.length * 100) : 0;
+  const pctDet = npsFeedback.length ? Math.round(detractors / npsFeedback.length * 100) : 0;
+
+  const handleSubmit = () => {
+    if (!fbClientId || !fbAssessor) return;
+    onAddFeedback({
+      id: "nps" + Date.now(),
+      clientId: fbClientId,
+      npsScore: fbScore,
+      comment: fbComment,
+      source: fbSource,
+      assessor: fbAssessor,
+      ts: new Date().toISOString(),
+    });
+    setShowForm(false);
+    setFbClientId(""); setFbScore(8); setFbComment(""); setFbSource(NPS_SOURCES[0]); setFbAssessor("");
+  };
+
+  return <div className="space-y-5">
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+      <StatCard label="Avg NPS" value={avgNPS.toFixed(1)} color={avgNPS >= 9 ? "#166534" : avgNPS >= 7 ? "#854d0e" : "#991b1b"} darkMode={darkMode} />
+      <StatCard label="Responses" value={npsFeedback.length} darkMode={darkMode} />
+      <StatCard label="Promoters" value={`${pctProm}%`} color="#166534" sub={`${promoters} total`} darkMode={darkMode} />
+      <StatCard label="Passives" value={`${pctPass}%`} color="#854d0e" sub={`${passives} total`} darkMode={darkMode} />
+      <StatCard label="Detractors" value={`${pctDet}%`} color="#991b1b" sub={`${detractors} total`} darkMode={darkMode} />
+    </div>
+
+    {/* NPS Bar */}
+    {npsFeedback.length > 0 && <div className={`rounded-xl border p-4 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
+      <h3 className={`text-sm font-semibold mb-2 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>NPS DISTRIBUTION</h3>
+      <div className="h-6 flex rounded-lg overflow-hidden">
+        {pctProm > 0 && <div style={{ width: `${pctProm}%` }} className="bg-green-400 flex items-center justify-center"><span className="text-xs font-bold text-green-900">{pctProm}%</span></div>}
+        {pctPass > 0 && <div style={{ width: `${pctPass}%` }} className="bg-amber-300 flex items-center justify-center"><span className="text-xs font-bold text-amber-900">{pctPass}%</span></div>}
+        {pctDet > 0 && <div style={{ width: `${pctDet}%` }} className="bg-red-400 flex items-center justify-center"><span className="text-xs font-bold text-red-900">{pctDet}%</span></div>}
+      </div>
+      <div className="flex gap-4 mt-2 text-xs">
+        <span className="text-green-700">Promoter (9-10)</span>
+        <span className="text-amber-700">Passive (7-8)</span>
+        <span className="text-red-700">Detractor (0-6)</span>
+      </div>
+    </div>}
+
+    {/* Add feedback form */}
+    <div className={`rounded-xl border p-4 sm:p-5 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
+      <div className="flex justify-between items-center mb-4">
+        <h3 className={`text-sm font-semibold ${darkMode ? "text-gray-400" : "text-gray-500"}`}>NPS FEEDBACK</h3>
+        <button onClick={() => setShowForm(!showForm)} className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-blue-700">
+          {showForm ? "Cancel" : "+ Log NPS"}
+        </button>
+      </div>
+      {showForm && <div className={`mb-4 p-4 rounded-lg border ${darkMode ? "bg-slate-700 border-slate-600" : "bg-gray-50 border-gray-200"}`}>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Client</label>
+              <select className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-600 border-slate-500 text-gray-200" : "border-gray-200 bg-white"}`} value={fbClientId} onChange={e => setFbClientId(e.target.value)}>
+                <option value="">Select...</option>{stats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>NPS Score (0-10)</label>
+              <div className="flex items-center gap-2">
+                <input type="range" min="0" max="10" value={fbScore} onChange={e => setFbScore(Number(e.target.value))} className="flex-1 h-2 accent-blue-600" />
+                <span className="w-8 text-center text-sm font-bold" style={{ color: npsColor(fbScore) }}>{fbScore}</span>
+              </div>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Source</label>
+              <select className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-600 border-slate-500 text-gray-200" : "border-gray-200 bg-white"}`} value={fbSource} onChange={e => setFbSource(e.target.value)}>
+                {NPS_SOURCES.map(s => <option key={s}>{s}</option>)}
+              </select>
+            </div>
+            <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Assessor</label>
+              <select className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-600 border-slate-500 text-gray-200" : "border-gray-200 bg-white"}`} value={fbAssessor} onChange={e => setFbAssessor(e.target.value)}>
+                <option value="">Select...</option>{ADVISORS.map(a => <option key={a}>{a}</option>)}
+              </select>
+            </div>
+          </div>
+          <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Comment</label>
+            <textarea className={`w-full border rounded-lg px-3 py-2 text-sm h-16 ${darkMode ? "bg-slate-600 border-slate-500 text-gray-200" : "border-gray-200 bg-white"}`} value={fbComment} onChange={e => setFbComment(e.target.value)} />
+          </div>
+          <button onClick={handleSubmit} disabled={!fbClientId || !fbAssessor} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40">Save Feedback</button>
+        </div>
+      </div>}
+
+      {/* Feed */}
+      {sorted.length === 0 ? <p className="text-sm text-gray-400 text-center py-4">No NPS feedback yet.</p> :
+        sorted.map(fb => {
+          const client = stats.find(c => c.id === fb.clientId);
+          const cat = npsCategory(fb.npsScore);
+          const catBg = cat === "Promoter" ? "bg-green-100 text-green-700" : cat === "Passive" ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700";
+          return <div key={fb.id} className={`flex items-start gap-3 py-3 border-b last:border-0 ${darkMode ? "border-slate-700" : "border-gray-100"}`}>
+            <div className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm" style={{ background: cat === "Promoter" ? "#dcfce7" : cat === "Passive" ? "#fef9c3" : "#fecaca", color: npsColor(fb.npsScore) }}>{fb.npsScore}</div>
+            <div className="flex-1 min-w-0">
+              <div className={`text-sm ${darkMode ? "text-gray-200" : ""}`}><span className="font-semibold">{client?.name || "?"}</span><span className={`ml-2 text-xs px-2 py-0.5 rounded-full font-semibold ${catBg}`}>{cat}</span></div>
+              {fb.comment && <p className={`text-xs mt-1 ${darkMode ? "text-gray-400" : "text-gray-600"}`}>{fb.comment}</p>}
+              <div className={`text-[10px] mt-1 ${darkMode ? "text-gray-500" : "text-gray-400"}`}>{fb.source} {"\u00B7"} {fb.assessor} {"\u00B7"} {timeAgo(fb.ts)}</div>
+            </div>
+          </div>;
+        })}
+    </div>
+  </div>;
+}
+
 // ===== SETTINGS =====
-function SettingsTab({ settings, onSave, onSync, onImport, darkMode }: { settings: Settings; onSave: (s: Settings) => void; onSync: () => void; onImport: (clients: Client[]) => Promise<number>; darkMode?: boolean }) {
+function SettingsTab({ settings, onSave, onSync, onImport, onCSVImport, darkMode, currentUser }: {
+  settings: Settings; onSave: (s: Settings) => void; onSync: () => void;
+  onImport: (clients: Client[]) => Promise<number>;
+  onCSVImport: (clients: Client[]) => void;
+  darkMode?: boolean; currentUser?: UserProfile;
+}) {
   const [sources, setSources] = useState<string[]>(settings.referralSources || REFERRAL_SOURCES);
   const [newSource, setNewSource] = useState("");
   const [wbEnabled, setWbEnabled] = useState(settings.wealthboxEnabled || false);
@@ -609,6 +889,18 @@ function SettingsTab({ settings, onSave, onSync, onImport, darkMode }: { setting
   const [importStatus, setImportStatus] = useState<string>("");
   const [testStatus, setTestStatus] = useState<string>("");
   const [importDialog, setImportDialog] = useState<{ open: boolean; clients: Client[] }>({ open: false, clients: [] });
+
+  // CSV import state
+  const [csvPreview, setCsvPreview] = useState<Client[] | null>(null);
+  const [csvError, setCsvError] = useState("");
+
+  // Scoring config state
+  const existingConfig = settings.scoringConfig;
+  const { atRisk: curAtRisk, watch: curWatch } = getThresholds(settings);
+  const curWeights = getEffectiveWeights(settings);
+  const [scAtRisk, setScAtRisk] = useState(curAtRisk);
+  const [scWatch, setScWatch] = useState(curWatch);
+  const [scWeights, setScWeights] = useState<Record<string, number>>({ ...curWeights });
 
   const addSource = () => {
     if (newSource.trim() && !sources.includes(newSource.trim())) {
@@ -631,12 +923,12 @@ function SettingsTab({ settings, onSave, onSync, onImport, darkMode }: { setting
     try {
       const result = await testWealthboxConnection();
       if (result.success) {
-        setTestStatus(`✓ Connected! Found ${result.count} contacts`);
+        setTestStatus(`Connected! Found ${result.count} contacts`);
       } else {
-        setTestStatus(`✗ Failed: ${result.message}`);
+        setTestStatus(`Failed: ${result.message}`);
       }
     } catch (error) {
-      setTestStatus(`✗ Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setTestStatus(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
@@ -646,10 +938,10 @@ function SettingsTab({ settings, onSave, onSync, onImport, darkMode }: { setting
     try {
       await onSync();
       const now = new Date().toLocaleString();
-      setSyncStatus(`✓ Synced at ${now}`);
+      setSyncStatus(`Synced at ${now}`);
       onSave({ ...settings, lastWealthboxSync: now });
     } catch (error) {
-      setSyncStatus(`✗ Sync failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setSyncStatus(`Sync failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setSyncing(false);
     }
@@ -659,19 +951,17 @@ function SettingsTab({ settings, onSave, onSync, onImport, darkMode }: { setting
     setImporting(true);
     setImportStatus("Fetching new clients...");
     try {
-      // Fetch new clients from Wealthbox
       const { newClients } = await importNewClientsFromWealthbox([]);
       if (newClients.length === 0) {
-        setImportStatus(`✓ No new clients to import`);
+        setImportStatus(`No new clients to import`);
         setImporting(false);
       } else {
-        // Show the dialog
         setImportDialog({ open: true, clients: newClients });
         setImportStatus("");
         setImporting(false);
       }
     } catch (error) {
-      setImportStatus(`✗ Failed to fetch clients: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setImportStatus(`Failed to fetch clients: ${error instanceof Error ? error.message : 'Unknown error'}`);
       setImporting(false);
     }
   };
@@ -681,18 +971,13 @@ function SettingsTab({ settings, onSave, onSync, onImport, darkMode }: { setting
     setImporting(true);
     setImportStatus("Enriching with tasks...");
     try {
-      // First, filter to selected clients
       const selectedClients = importDialog.clients.filter(c => selectedIds.includes(c.id));
-
-      // Then enrich them with completed tasks (this is slower but avoids rate limiting)
       const enrichedClients = await enrichClientsWithTasks(selectedClients);
-
       setImportStatus("Importing...");
-      // Finally, import the enriched clients
       const count = await onImport(enrichedClients);
-      setImportStatus(`✓ Imported ${count} client${count === 1 ? '' : 's'} with task history!`);
+      setImportStatus(`Imported ${count} client${count === 1 ? '' : 's'} with task history!`);
     } catch (error) {
-      setImportStatus(`✗ Import failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setImportStatus(`Import failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setImporting(false);
     }
@@ -702,6 +987,47 @@ function SettingsTab({ settings, onSave, onSync, onImport, darkMode }: { setting
     setImportDialog({ open: false, clients: [] });
     setImportStatus("");
   };
+
+  const handleCSVFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setCsvError("");
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const text = ev.target?.result as string;
+        const parsed = parseCSVClients(text);
+        if (parsed.length === 0) {
+          setCsvError("No valid clients found in CSV. Ensure the CSV has a header row with columns like name, tier, lead_advisor, etc.");
+          setCsvPreview(null);
+        } else {
+          setCsvPreview(parsed);
+        }
+      } catch (err) {
+        setCsvError(`Error parsing CSV: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        setCsvPreview(null);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleCSVConfirm = () => {
+    if (csvPreview && csvPreview.length > 0) {
+      onCSVImport(csvPreview);
+      setCsvPreview(null);
+    }
+  };
+
+  const handleSaveScoringConfig = () => {
+    const config: ScoringConfig = {
+      atRiskThreshold: scAtRisk,
+      watchThreshold: scWatch,
+      dimensionWeights: { ...scWeights },
+    };
+    onSave({ ...settings, referralSources: sources, wealthboxEnabled: wbEnabled, scoringConfig: config });
+  };
+
+  const weightsSum = Object.values(scWeights).reduce((s, v) => s + v, 0);
 
   return <div className={`rounded-xl border p-4 sm:p-5 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
     <h3 className={`text-sm font-semibold mb-4 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>SETTINGS</h3>
@@ -733,9 +1059,39 @@ function SettingsTab({ settings, onSave, onSync, onImport, darkMode }: { setting
         </div>
       </div>
 
+      {/* CSV Import */}
+      <div>
+        <h4 className={`text-base font-semibold mb-2 ${darkMode ? "text-gray-100" : "text-gray-900"}`}>CSV Import</h4>
+        <p className={`text-xs mb-3 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Import clients from a CSV file. Expected columns: name, tier, lead_advisor, onboard_date, monthly_fee, referral_source, referred_by, pod, wpa.</p>
+        <input
+          type="file"
+          accept=".csv"
+          onChange={handleCSVFile}
+          className={`block w-full text-sm ${darkMode ? "text-gray-300" : "text-gray-700"} file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100`}
+        />
+        {csvError && <div className="text-xs p-2 rounded mt-2 bg-red-100 text-red-800">{csvError}</div>}
+        {csvPreview && csvPreview.length > 0 && <div className="mt-3">
+          <div className={`text-sm font-medium mb-2 ${darkMode ? "text-gray-200" : "text-gray-700"}`}>Preview: {csvPreview.length} client{csvPreview.length === 1 ? "" : "s"} found</div>
+          <div className={`max-h-48 overflow-y-auto rounded-lg border ${darkMode ? "border-slate-600" : "border-gray-200"}`}>
+            {csvPreview.map((c, i) => (
+              <div key={i} className={`flex items-center gap-2 px-3 py-2 text-sm border-b last:border-0 ${darkMode ? "border-slate-600 text-gray-300" : "border-gray-100 text-gray-700"}`}>
+                <span className="font-medium flex-1 truncate">{c.name}</span>
+                <span className={`text-xs px-2 py-0.5 rounded ${darkMode ? "bg-slate-600 text-gray-400" : "bg-gray-100 text-gray-500"}`}>{c.tier}</span>
+                <span className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{c.leadAdvisor}</span>
+                <span className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{fmtM(c.monthlyFee)}/mo</span>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2 mt-2">
+            <button onClick={handleCSVConfirm} className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700">Import {csvPreview.length} Clients</button>
+            <button onClick={() => setCsvPreview(null)} className={`border px-4 py-2 rounded-lg text-sm ${darkMode ? "border-slate-600 text-gray-300" : "border-gray-200 text-gray-600"}`}>Cancel</button>
+          </div>
+        </div>}
+      </div>
+
       {/* Wealthbox Integration */}
       <div>
-        <h4 className={`text-base font-semibold mb-2 ${darkMode ? "text-gray-100" : "text-gray-900"}`}>🔗 Wealthbox Integration</h4>
+        <h4 className={`text-base font-semibold mb-2 ${darkMode ? "text-gray-100" : "text-gray-900"}`}>Wealthbox Integration</h4>
         <p className={`text-xs mb-3 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Sync clients from Wealthbox and push health scores back to custom fields.</p>
 
         <div className="space-y-3">
@@ -773,7 +1129,7 @@ function SettingsTab({ settings, onSave, onSync, onImport, darkMode }: { setting
                   disabled={importing}
                   className={`w-full px-4 py-2 rounded-lg text-sm font-medium ${importing ? "opacity-50 cursor-not-allowed" : ""} ${darkMode ? "bg-slate-600 text-gray-200 hover:bg-slate-500" : "bg-white text-gray-700 hover:bg-gray-50"} border ${darkMode ? "border-slate-500" : "border-gray-300"}`}
                 >
-                  {importing ? "Importing..." : "📥 Import New Clients Only"}
+                  {importing ? "Importing..." : "Import New Clients Only"}
                 </button>
                 <p className={`text-[11px] mt-1.5 ${darkMode ? "text-gray-400" : "text-gray-600"}`}>
                   One-time import of new Wealthbox contacts not already in the app. Existing clients are not affected.
@@ -781,19 +1137,19 @@ function SettingsTab({ settings, onSave, onSync, onImport, darkMode }: { setting
               </div>
 
               {testStatus && (
-                <div className={`text-xs p-2 rounded ${testStatus.startsWith("✓") ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}>
+                <div className={`text-xs p-2 rounded ${testStatus.startsWith("Connected") ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}>
                   {testStatus}
                 </div>
               )}
 
               {syncStatus && (
-                <div className={`text-xs p-2 rounded ${syncStatus.startsWith("✓") ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}>
+                <div className={`text-xs p-2 rounded ${syncStatus.startsWith("Synced") ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}>
                   {syncStatus}
                 </div>
               )}
 
               {importStatus && (
-                <div className={`text-xs p-2 rounded ${importStatus.startsWith("✓") ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}>
+                <div className={`text-xs p-2 rounded ${importStatus.startsWith("Imported") || importStatus.startsWith("No new") ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}>
                   {importStatus}
                 </div>
               )}
@@ -820,8 +1176,47 @@ function SettingsTab({ settings, onSave, onSync, onImport, darkMode }: { setting
         </div>
       </div>
 
+      {/* Admin: Scoring Config */}
+      {canConfigureScoring(currentUser) && <div>
+        <h4 className={`text-base font-semibold mb-2 ${darkMode ? "text-gray-100" : "text-gray-900"}`}>Scoring Configuration</h4>
+        <p className={`text-xs mb-3 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Configure thresholds and dimension weights for health score calculations.</p>
+
+        <div className={`p-4 rounded-lg border ${darkMode ? "bg-slate-700 border-slate-600" : "bg-gray-50 border-gray-200"}`}>
+          <div className="grid grid-cols-2 gap-4 mb-4">
+            <div>
+              <label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>At-Risk Threshold (below this = AT RISK)</label>
+              <input type="number" min="1" max="10" step="0.5" value={scAtRisk} onChange={e => setScAtRisk(Number(e.target.value))}
+                className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-600 border-slate-500 text-gray-200" : "border-gray-200 bg-white"}`} />
+            </div>
+            <div>
+              <label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Watch Threshold (below this = WATCH)</label>
+              <input type="number" min="1" max="10" step="0.5" value={scWatch} onChange={e => setScWatch(Number(e.target.value))}
+                className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-600 border-slate-500 text-gray-200" : "border-gray-200 bg-white"}`} />
+            </div>
+          </div>
+
+          <h5 className={`text-xs font-semibold mb-2 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>DIMENSION WEIGHTS (must sum to 1.0)</h5>
+          <div className="space-y-2 mb-3">
+            {DIMENSIONS.map(dim => (
+              <div key={dim} className="flex items-center gap-2">
+                <span className={`text-xs w-32 ${darkMode ? "text-gray-300" : "text-gray-700"}`}>{dim}</span>
+                <input type="range" min="0" max="0.5" step="0.01" value={scWeights[dim] || 0}
+                  onChange={e => setScWeights({ ...scWeights, [dim]: Number(e.target.value) })}
+                  className="flex-1 h-2 accent-blue-600" />
+                <span className={`text-xs w-10 text-right font-mono ${darkMode ? "text-gray-300" : "text-gray-700"}`}>{(scWeights[dim] || 0).toFixed(2)}</span>
+              </div>
+            ))}
+          </div>
+          <div className={`text-xs mb-3 ${Math.abs(weightsSum - 1.0) < 0.01 ? "text-green-600" : "text-red-600"}`}>
+            Sum: {weightsSum.toFixed(2)} {Math.abs(weightsSum - 1.0) < 0.01 ? "(valid)" : "(must be 1.0)"}
+          </div>
+          <button onClick={handleSaveScoringConfig} disabled={Math.abs(weightsSum - 1.0) >= 0.01}
+            className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-40">Save Scoring Config</button>
+        </div>
+      </div>}
+
       {/* Save Button */}
-      <div className="flex gap-2 pt-4 border-t border-gray-200">
+      <div className={`flex gap-2 pt-4 border-t ${darkMode ? "border-slate-700" : "border-gray-200"}`}>
         <button onClick={handleSave} className="bg-green-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-green-700">Save Settings</button>
         <button onClick={() => { setSources(settings.referralSources || REFERRAL_SOURCES); setWbEnabled(settings.wealthboxEnabled || false); }} className={`border px-4 py-2 rounded-lg text-sm ${darkMode ? "border-slate-600 text-gray-300 hover:bg-slate-700" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>Reset</button>
       </div>
@@ -840,23 +1235,44 @@ function SettingsTab({ settings, onSave, onSync, onImport, darkMode }: { setting
 }
 
 // ===== CLIENT DETAIL =====
-function ClientDetail({ client, scores, wows, referrals, onBack, onScore, onAddWow, onEditClient, onExportPDF, user, darkMode }: {
+function ClientDetail({ client, scores, wows, referrals, onBack, onScore, onAddWow, onEditClient, onExportPDF, user, darkMode, settings }: {
   client: ClientStat; scores: Score[]; wows: Wow[]; referrals: Referral[];
-  onBack: () => void; onScore: () => void; onAddWow: () => void; onEditClient: () => void; onExportPDF: () => void; user?: UserProfile; darkMode?: boolean;
+  onBack: () => void; onScore: () => void; onAddWow: () => void; onEditClient: () => void; onExportPDF: () => void; user?: UserProfile; darkMode?: boolean; settings?: Settings;
 }) {
   const cs = (scores || []).filter(s => s.clientId === client.id).sort((a, b) => (a.year * 12 + a.month) - (b.year * 12 + b.month));
   const latest = cs.length > 0 ? cs[cs.length - 1] : null;
   const prev = cs.length > 1 ? cs[cs.length - 2] : null;
   const ls = latest ? calcScore(latest.scores) : null;
   const ps = prev ? calcScore(prev.scores) : null;
-  const st = getStatus(ls);
+  const st = getStatus(ls, settings);
   const cw = (wows || []).filter(w => w.clientId === client.id);
   const cr = (referrals || []).filter(r => r.referrerId === client.id);
   const trend = cs.map(s => ({ label: `${MO[s.month]} ${s.year}`, score: calcScore(s.scores) || 0 }));
   const cH = 120;
 
+  // Exec Summary state
+  const [execSummary, setExecSummary] = useState<ExecSummary | null>(null);
+  const [execLoading, setExecLoading] = useState(false);
+  const [execError, setExecError] = useState("");
+
+  const handleLoadExecSummary = async () => {
+    if (!client.wealthboxId) return;
+    setExecLoading(true);
+    setExecError("");
+    try {
+      const summary = await fetchExecSummary(client.id, client.wealthboxId, client.lastScoredTs);
+      setExecSummary(summary);
+    } catch (err) {
+      setExecError(err instanceof Error ? err.message : "Failed to load exec summary");
+    } finally {
+      setExecLoading(false);
+    }
+  };
+
+  const effectiveWeights = getEffectiveWeights(settings);
+
   return <div className="space-y-4 sm:space-y-5">
-    <button onClick={onBack} className="text-sm text-blue-600 hover:text-blue-800">← Back</button>
+    <button onClick={onBack} className="text-sm text-blue-600 hover:text-blue-800">{"\u2190"} Back</button>
     <div className={`rounded-xl border p-4 sm:p-5 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
@@ -868,16 +1284,62 @@ function ClientDetail({ client, scores, wows, referrals, onBack, onScore, onAddW
             <span className={`text-xs sm:text-sm ${darkMode ? "text-gray-400" : "text-gray-400"}`}>Since {client.onboardDate}</span>
           </div>
           {client.referralSource && <div className={`text-xs mt-1 ${darkMode ? "text-blue-400" : "text-blue-600"}`}>Source: {client.referralSource}{client.referredBy ? ` (${client.referredBy})` : ""}</div>}
-          {client.anniversaryDays != null && client.anniversaryDays <= 60 && <div className={`text-xs mt-1 ${darkMode ? "text-purple-400" : "text-purple-600"}`}>🎂 Anniversary: {client.nextAnniversary} ({client.anniversaryDays === 0 ? "TODAY!" : `in ${client.anniversaryDays} days`})</div>}
+          {client.anniversaryDays != null && client.anniversaryDays <= 60 && <div className={`text-xs mt-1 ${darkMode ? "text-purple-400" : "text-purple-600"}`}>{"🎂"} Anniversary: {client.nextAnniversary} ({client.anniversaryDays === 0 ? "TODAY!" : `in ${client.anniversaryDays} days`})</div>}
+          {client.latestNPS != null && <div className={`text-xs mt-1`} style={{ color: npsColor(client.latestNPS) }}>NPS: {client.latestNPS} ({npsCategory(client.latestNPS)})</div>}
         </div>
-        <div className="flex items-center gap-2 sm:gap-3"><ScoreCircle score={ls} size={48} /><div><Badge status={st} /><div className="flex items-center gap-1 mt-1"><TrendArrow cur={ls} prev={ps} /><span className="text-xs text-gray-400 hidden sm:inline">vs prior</span></div></div></div>
+        <div className="flex items-center gap-2 sm:gap-3"><ScoreCircle score={ls} size={48} settings={settings} /><div><Badge status={st} /><div className="flex items-center gap-1 mt-1"><TrendArrow cur={ls} prev={ps} /><span className="text-xs text-gray-400 hidden sm:inline">vs prior</span></div></div></div>
       </div>
       <div className="flex gap-2 mt-4 flex-wrap">
         {canScore(user) && <button onClick={onScore} className="bg-blue-600 text-white px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium hover:bg-blue-700">Score This Month</button>}
         {canScore(user) && <button onClick={onAddWow} className="bg-amber-500 text-white px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium hover:bg-amber-600">+ Wow</button>}
-        {canEdit(user) && <button onClick={onEditClient} className="border border-gray-200 text-gray-600 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm hover:bg-gray-50">Edit</button>}
-        {canExport(user) && <button onClick={onExportPDF} className="border border-blue-200 text-blue-600 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm hover:bg-blue-50 font-medium">📄 Export PDF</button>}
+        {canEdit(user) && <button onClick={onEditClient} className={`border text-gray-600 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm hover:bg-gray-50 ${darkMode ? "border-slate-600 text-gray-300 hover:bg-slate-700" : "border-gray-200"}`}>Edit</button>}
+        {canExport(user) && <button onClick={onExportPDF} className="border border-blue-200 text-blue-600 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm hover:bg-blue-50 font-medium">Export PDF</button>}
       </div>
+    </div>
+
+    {/* Exec Summary */}
+    <div className={`rounded-xl border p-4 sm:p-5 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
+      <h3 className={`text-sm font-semibold mb-3 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>EXEC SUMMARY</h3>
+      {!client.wealthboxId ? (
+        <p className={`text-sm ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Connect to Wealthbox to view exec summary</p>
+      ) : execSummary ? (
+        <div className="space-y-3">
+          {execSummary.achievementsSinceLastCheckin.length > 0 && <div>
+            <h4 className={`text-xs font-semibold mb-1 ${darkMode ? "text-green-400" : "text-green-700"}`}>Achievements Since Last Check-in</h4>
+            {execSummary.achievementsSinceLastCheckin.map((a, i) => (
+              <div key={i} className={`text-sm py-1 ${darkMode ? "text-gray-300" : "text-gray-700"}`}>
+                {"\u2022"} {a.name} <span className={`text-xs ${darkMode ? "text-gray-500" : "text-gray-400"}`}>{a.completedAt}</span>
+                {a.description && <span className={`text-xs block ml-3 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{a.description}</span>}
+              </div>
+            ))}
+          </div>}
+          {execSummary.currentPriorities.length > 0 && <div>
+            <h4 className={`text-xs font-semibold mb-1 ${darkMode ? "text-blue-400" : "text-blue-700"}`}>Current Priorities</h4>
+            {execSummary.currentPriorities.map((p, i) => (
+              <div key={i} className={`text-sm py-1 ${darkMode ? "text-gray-300" : "text-gray-700"}`}>
+                {"\u2022"} {p.name} {p.dueDate && <span className={`text-xs ${darkMode ? "text-gray-500" : "text-gray-400"}`}>Due: {p.dueDate}</span>}
+                {p.description && <span className={`text-xs block ml-3 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{p.description}</span>}
+              </div>
+            ))}
+          </div>}
+          {execSummary.outstandingItems.length > 0 && <div>
+            <h4 className={`text-xs font-semibold mb-1 ${darkMode ? "text-red-400" : "text-red-700"}`}>Outstanding / Overdue Items</h4>
+            {execSummary.outstandingItems.map((o, i) => (
+              <div key={i} className={`text-sm py-1 ${darkMode ? "text-gray-300" : "text-gray-700"}`}>
+                {"\u2022"} {o.name} {o.dueDate && <span className={`text-xs ${darkMode ? "text-gray-500" : "text-gray-400"}`}>Due: {o.dueDate}</span>}
+                {o.description && <span className={`text-xs block ml-3 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{o.description}</span>}
+              </div>
+            ))}
+          </div>}
+          {execSummary.lastCheckinDate && <div className={`text-[10px] mt-2 ${darkMode ? "text-gray-500" : "text-gray-400"}`}>Last check-in: {execSummary.lastCheckinDate} | Generated: {execSummary.generatedAt}</div>}
+        </div>
+      ) : (
+        <div>
+          {execLoading ? <p className={`text-sm ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Loading exec summary...</p> :
+            execError ? <p className="text-sm text-red-500">{execError}</p> :
+            <button onClick={handleLoadExecSummary} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700">Load Summary</button>}
+        </div>
+      )}
     </div>
 
     {latest && <div className={`rounded-xl border p-4 sm:p-5 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
@@ -885,8 +1347,8 @@ function ClientDetail({ client, scores, wows, referrals, onBack, onScore, onAddW
       {DIMENSIONS.map(dim => {
         const avg = dimAvg(latest.scores, dim);
         return <div key={dim} className="mb-3">
-          <div className="flex justify-between mb-1"><span className={`text-sm font-medium ${darkMode ? "text-gray-300" : "text-gray-700"}`}>{dim} ({DIM_WEIGHTS[dim] * 100}%)</span><span className="text-sm font-semibold" style={{ color: sColor(getStatus(avg)).tx }}>{avg != null ? avg.toFixed(1) : "—"}</span></div>
-          <div className="grid grid-cols-1 gap-1 ml-3 sm:grid-cols-2 lg:grid-cols-3">{METRICS.filter(m => m.dim === dim).map(m => <div key={m.id} className="flex items-center gap-2"><span className={`text-xs w-28 truncate ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{m.name} ({m.weight * 100}%)</span><MiniBar value={latest.scores[m.id]} /></div>)}</div>
+          <div className="flex justify-between mb-1"><span className={`text-sm font-medium ${darkMode ? "text-gray-300" : "text-gray-700"}`}>{dim} ({((effectiveWeights[dim] || 0) * 100).toFixed(0)}%)</span><span className="text-sm font-semibold" style={{ color: sColor(getStatus(avg, settings)).tx }}>{avg != null ? avg.toFixed(1) : "\u2014"}</span></div>
+          <div className="grid grid-cols-1 gap-1 ml-3 sm:grid-cols-2 lg:grid-cols-3">{METRICS.filter(m => m.dim === dim).map(m => <div key={m.id} className="flex items-center gap-2"><span className={`text-xs w-28 truncate ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{m.name} ({(m.weight * 100).toFixed(0)}%)</span><MiniBar value={latest.scores[m.id]} /></div>)}</div>
         </div>;
       })}
     </div>}
@@ -905,7 +1367,7 @@ function ClientDetail({ client, scores, wows, referrals, onBack, onScore, onAddW
 
     <div className={`rounded-xl border p-4 sm:p-5 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
       <h3 className={`text-sm font-semibold mb-3 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>HISTORY</h3>
-      {[...cs].reverse().map((s, i) => { const score = calcScore(s.scores); const sst = getStatus(score); return <div key={i} className={`border rounded-lg p-3 mb-2 ${darkMode ? "border-slate-700" : "border-gray-100"}`}>
+      {[...cs].reverse().map((s, i) => { const score = calcScore(s.scores); const sst = getStatus(score, settings); return <div key={i} className={`border rounded-lg p-3 mb-2 ${darkMode ? "border-slate-700" : "border-gray-100"}`}>
         <div className="flex justify-between mb-1"><div className="flex items-center gap-2"><span className={`font-medium text-sm ${darkMode ? "text-gray-200" : "text-gray-900"}`}>{MO[s.month]} {s.year}</span><Badge status={sst} sm /></div><span className="font-bold text-lg" style={{ color: sColor(sst).tx }}>{score?.toFixed(2)}</span></div>
         {s.notes && <p className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-600"}`}>{s.notes}</p>}{s.actionItems && <p className={`text-xs font-medium ${darkMode ? "text-amber-400" : "text-amber-700"}`}>{s.actionItems}</p>}<div className={`text-[10px] mt-1 ${darkMode ? "text-gray-500" : "text-gray-400"}`}>By {s.assessor}</div>
       </div>; })}
@@ -919,26 +1381,27 @@ function ClientDetail({ client, scores, wows, referrals, onBack, onScore, onAddW
 
     <div className={`rounded-xl border p-4 sm:p-5 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
       <div className="flex justify-between mb-3"><h3 className={`text-sm font-semibold ${darkMode ? "text-gray-400" : "text-gray-500"}`}>WOW MOMENTS</h3>{canScore(user) && <button onClick={onAddWow} className="text-xs text-amber-600 font-medium">+ Add</button>}</div>
-      {cw.map(w => <div key={w.id} className="border border-amber-100 bg-amber-50 rounded-lg p-3 mb-2"><div className="flex items-center gap-2 mb-1"><span className="text-xs px-2 py-0.5 rounded bg-amber-200 text-amber-800 font-medium">{w.type}</span><span className="text-xs text-gray-400">{w.date} · {w.owner}</span></div><p className="text-sm text-gray-800">{w.description}</p>{w.reaction && <p className="text-xs text-amber-700 italic mt-1">↪ {w.reaction}</p>}</div>)}
+      {cw.map(w => <div key={w.id} className="border border-amber-100 bg-amber-50 rounded-lg p-3 mb-2"><div className="flex items-center gap-2 mb-1"><span className="text-xs px-2 py-0.5 rounded bg-amber-200 text-amber-800 font-medium">{w.type}</span><span className="text-xs text-gray-400">{w.date} {"\u00B7"} {w.owner}</span></div><p className="text-sm text-gray-800">{w.description}</p>{w.reaction && <p className="text-xs text-amber-700 italic mt-1">{"\u21AA"} {w.reaction}</p>}</div>)}
       {cw.length === 0 && <p className="text-sm text-gray-400 text-center py-2">No wow moments.</p>}
     </div>
   </div>;
 }
 
 // ===== SCORING FORM =====
-function ScoringForm({ client, existingScore, onSave, onCancel, darkMode }: { client: Client; existingScore?: Score; onSave: (s: Score) => void; onCancel: () => void; darkMode?: boolean }) {
+function ScoringForm({ client, existingScore, onSave, onCancel, darkMode, settings }: { client: Client; existingScore?: Score; onSave: (s: Score) => void; onCancel: () => void; darkMode?: boolean; settings?: Settings }) {
   const now = new Date();
   const [month, setMonth] = useState(existingScore?.month ?? now.getMonth());
   const [year, setYear] = useState(existingScore?.year ?? now.getFullYear());
-  const [scoreVals, setScoreVals] = useState(existingScore?.scores ?? Array(14).fill(5));
+  const [scoreVals, setScoreVals] = useState(existingScore?.scores ?? Array(METRIC_COUNT).fill(5));
   const [assessor, setAssessor] = useState(existingScore?.assessor ?? "");
   const [notes, setNotes] = useState(existingScore?.notes ?? "");
   const [actions, setActions] = useState(existingScore?.actionItems ?? "");
-  const weighted = calcScore(scoreVals); const status = getStatus(weighted);
+  const weighted = calcScore(scoreVals); const status = getStatus(weighted, settings);
   const upd = (i: number, v: string) => { const n = [...scoreVals]; n[i] = Math.max(1, Math.min(10, Number(v) || 5)); setScoreVals(n); };
+  const effectiveWeights = getEffectiveWeights(settings);
 
   return <div className="space-y-4 sm:space-y-5">
-    <button onClick={onCancel} className="text-sm text-blue-600 hover:text-blue-800">← Back</button>
+    <button onClick={onCancel} className="text-sm text-blue-600 hover:text-blue-800">{"\u2190"} Back</button>
     <div className={`rounded-xl border p-4 sm:p-5 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
       <h2 className={`text-base sm:text-lg font-bold mb-1 ${darkMode ? "text-gray-100" : "text-gray-900"}`}>Score: {client.name}</h2>
       <div className="flex gap-3 mb-4 flex-wrap">
@@ -946,9 +1409,9 @@ function ScoringForm({ client, existingScore, onSave, onCancel, darkMode }: { cl
         <div><label className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Year</label><input type="number" className={`block border rounded px-2 py-1 text-sm w-20 mt-0.5 ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={year} onChange={e => setYear(Number(e.target.value))} /></div>
         <div><label className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Assessor</label><select className={`block border rounded px-2 py-1 text-sm mt-0.5 ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={assessor} onChange={e => setAssessor(e.target.value)}><option value="">Select...</option>{ADVISORS.map(a => <option key={a}>{a}</option>)}</select></div>
       </div>
-      <div className="flex items-center gap-4 p-3 rounded-lg mb-4" style={{ background: sColor(status).bg, border: `1px solid ${sColor(status).bd}` }}><ScoreCircle score={weighted} size={52} /><div><div className="text-sm font-semibold" style={{ color: sColor(status).tx }}>{status || "Score all metrics"}</div><div className="text-xs text-gray-500">Weighted: {weighted?.toFixed(2)}</div></div></div>
-      {DIMENSIONS.map(dim => <div key={dim} className="mb-4"><h3 className={`text-sm font-semibold mb-2 ${darkMode ? "text-gray-300" : "text-gray-700"}`}>{dim} <span className={`font-normal text-xs ${darkMode ? "text-gray-500" : "text-gray-400"}`}>({(DIM_WEIGHTS[dim] * 100).toFixed(0)}%)</span></h3>
-        {METRICS.filter(m => m.dim === dim).map(m => <div key={m.id} className="mb-3"><div className="flex items-center gap-2 mb-1"><div className={`w-40 text-xs font-medium ${darkMode ? "text-gray-300" : "text-gray-700"}`}>{m.name} ({(m.weight * 100).toFixed(0)}%)</div><input type="range" min="1" max="10" value={scoreVals[m.id]} onChange={e => upd(m.id, e.target.value)} className="flex-1 h-2 accent-blue-600" /><input type="number" min="1" max="10" value={scoreVals[m.id]} onChange={e => upd(m.id, e.target.value)} className={`w-12 text-center border rounded text-sm py-0.5 ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} /></div><div className={`text-[10px] ml-1 leading-tight ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{m.helper}</div></div>)}
+      <div className="flex items-center gap-4 p-3 rounded-lg mb-4" style={{ background: sColor(status).bg, border: `1px solid ${sColor(status).bd}` }}><ScoreCircle score={weighted} size={52} settings={settings} /><div><div className="text-sm font-semibold" style={{ color: sColor(status).tx }}>{status || "Score all metrics"}</div><div className="text-xs text-gray-500">Weighted: {weighted?.toFixed(2)}</div></div></div>
+      {DIMENSIONS.map(dim => <div key={dim} className="mb-4"><h3 className={`text-sm font-semibold mb-2 ${darkMode ? "text-gray-300" : "text-gray-700"}`}>{dim} <span className={`font-normal text-xs ${darkMode ? "text-gray-500" : "text-gray-400"}`}>({((effectiveWeights[dim] || 0) * 100).toFixed(0)}%)</span></h3>
+        {METRICS.filter(m => m.dim === dim).map(m => <div key={m.id} className="mb-3"><div className="flex items-center gap-2 mb-1"><div className={`w-40 text-xs font-medium ${darkMode ? "text-gray-300" : "text-gray-700"}`}>{m.name} ({(m.weight * 100).toFixed(0)}%)</div><input type="range" min="1" max="10" value={scoreVals[m.id] ?? 5} onChange={e => upd(m.id, e.target.value)} className="flex-1 h-2 accent-blue-600" /><input type="number" min="1" max="10" value={scoreVals[m.id] ?? 5} onChange={e => upd(m.id, e.target.value)} className={`w-12 text-center border rounded text-sm py-0.5 ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} /></div><div className={`text-[10px] ml-1 leading-tight ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{m.helper}</div></div>)}
       </div>)}
       <div className={`space-y-3 mt-4 pt-4 border-t ${darkMode ? "border-slate-700" : "border-gray-100"}`}>
         <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Observations</label><textarea className={`w-full border rounded-lg p-2 text-sm h-20 ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={notes} onChange={e => setNotes(e.target.value)} /></div>
@@ -956,7 +1419,7 @@ function ScoringForm({ client, existingScore, onSave, onCancel, darkMode }: { cl
       </div>
       <div className="flex gap-2 mt-4">
         <button onClick={() => onSave({ clientId: client.id, year, month, scores: scoreVals, assessor, notes, actionItems: actions, ts: new Date().toISOString() })} disabled={!assessor} className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40">Save</button>
-        <button onClick={onCancel} className="border border-gray-200 text-gray-600 px-4 py-2 rounded-lg text-sm hover:bg-gray-50">Cancel</button>
+        <button onClick={onCancel} className={`border px-4 py-2 rounded-lg text-sm ${darkMode ? "border-slate-600 text-gray-300 hover:bg-slate-700" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>Cancel</button>
       </div>
     </div>
   </div>;
@@ -974,7 +1437,7 @@ function ClientForm({ client, onSave, onCancel, referralSources, darkMode }: { c
   const [refBy, setRefBy] = useState(client?.referredBy ?? "");
 
   return <div className="space-y-5">
-    <button onClick={onCancel} className="text-sm text-blue-600 hover:text-blue-800">← Back</button>
+    <button onClick={onCancel} className="text-sm text-blue-600 hover:text-blue-800">{"\u2190"} Back</button>
     <div className={`rounded-xl border p-4 sm:p-5 max-w-lg ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
       <h2 className={`text-lg font-bold mb-4 ${darkMode ? "text-gray-100" : "text-gray-900"}`}>{client ? "Edit Client" : "Add Client"}</h2>
       <div className="space-y-3">
@@ -994,7 +1457,7 @@ function ClientForm({ client, onSave, onCancel, referralSources, darkMode }: { c
       </div>
       <div className="flex gap-2 mt-4">
         <button onClick={() => onSave({ id: client?.id || ("c" + Date.now()), name, tier, leadAdvisor: adv, onboardDate: date, monthlyFee: mFee, referralSource: refSrc, referredBy: refBy })} disabled={!name.trim()} className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40">Save</button>
-        <button onClick={onCancel} className="border border-gray-200 text-gray-600 px-4 py-2 rounded-lg text-sm hover:bg-gray-50">Cancel</button>
+        <button onClick={onCancel} className={`border px-4 py-2 rounded-lg text-sm ${darkMode ? "border-slate-600 text-gray-300 hover:bg-slate-700" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>Cancel</button>
       </div>
     </div>
   </div>;
@@ -1003,24 +1466,24 @@ function ClientForm({ client, onSave, onCancel, referralSources, darkMode }: { c
 // ===== WOW FORM =====
 function WowForm({ clientId, onSave, onCancel, darkMode }: { clientId: string; onSave: (w: Wow) => void; onCancel: () => void; darkMode?: boolean }) {
   const [desc, setDesc] = useState(""); const [type, setType] = useState("Proactive"); const [owner, setOwner] = useState(""); const [reaction, setReaction] = useState(""); const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
-  return <div className="space-y-5"><button onClick={onCancel} className="text-sm text-blue-600 hover:text-blue-800">← Back</button>
+  return <div className="space-y-5"><button onClick={onCancel} className="text-sm text-blue-600 hover:text-blue-800">{"\u2190"} Back</button>
     <div className={`rounded-xl border p-4 sm:p-5 max-w-lg ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}><h2 className={`text-lg font-bold mb-4 ${darkMode ? "text-gray-100" : "text-gray-900"}`}>Log Wow Moment</h2>
       <div className="space-y-3">
         <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Description</label><textarea className={`w-full border rounded-lg px-3 py-2 text-sm h-20 ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={desc} onChange={e => setDesc(e.target.value)} /></div>
         <div className="grid grid-cols-3 gap-3"><div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Type</label><select className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={type} onChange={e => setType(e.target.value)}>{WOW_TYPES.map(t => <option key={t}>{t}</option>)}</select></div><div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Owner</label><input className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={owner} onChange={e => setOwner(e.target.value)} /></div><div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Date</label><input type="date" className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={date} onChange={e => setDate(e.target.value)} /></div></div>
         <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Reaction</label><input className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={reaction} onChange={e => setReaction(e.target.value)} /></div>
       </div>
-      <div className="flex gap-2 mt-4"><button onClick={() => onSave({ id: "w" + Date.now(), clientId, date, description: desc, type, owner, reaction })} disabled={!desc.trim() || !owner.trim()} className="bg-amber-500 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-amber-600 disabled:opacity-40">Save</button><button onClick={onCancel} className="border border-gray-200 text-gray-600 px-4 py-2 rounded-lg text-sm hover:bg-gray-50">Cancel</button></div>
+      <div className="flex gap-2 mt-4"><button onClick={() => onSave({ id: "w" + Date.now(), clientId, date, description: desc, type, owner, reaction })} disabled={!desc.trim() || !owner.trim()} className="bg-amber-500 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-amber-600 disabled:opacity-40">Save</button><button onClick={onCancel} className={`border px-4 py-2 rounded-lg text-sm ${darkMode ? "border-slate-600 text-gray-300 hover:bg-slate-700" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>Cancel</button></div>
     </div>
   </div>;
 }
 
-// ===== REFERRAL FORM (NEW) =====
+// ===== REFERRAL FORM =====
 function ReferralForm({ clients, onSave, onCancel, referralSources, darkMode }: { clients: Client[]; onSave: (r: Referral) => void; onCancel: () => void; referralSources?: string[]; darkMode?: boolean }) {
   const sources = referralSources || REFERRAL_SOURCES;
   const [referrerId, setReferrerId] = useState(""); const [referredId, setReferredId] = useState(""); const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [source, setSource] = useState(sources[0]); const [status, setStatus] = useState("Prospect"); const [notes, setNotes] = useState(""); const [rev, setRev] = useState(0);
-  return <div className="space-y-5"><button onClick={onCancel} className="text-sm text-blue-600 hover:text-blue-800">← Back</button>
+  return <div className="space-y-5"><button onClick={onCancel} className="text-sm text-blue-600 hover:text-blue-800">{"\u2190"} Back</button>
     <div className={`rounded-xl border p-4 sm:p-5 max-w-lg ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}><h2 className={`text-lg font-bold mb-4 ${darkMode ? "text-gray-100" : "text-gray-900"}`}>Log Referral</h2>
       <div className="space-y-3">
         <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Referring Client</label><select className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={referrerId} onChange={e => setReferrerId(e.target.value)}><option value="">Select...</option>{clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
@@ -1033,7 +1496,7 @@ function ReferralForm({ clients, onSave, onCancel, referralSources, darkMode }: 
         <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Revenue Generated ($/mo)</label><input type="number" className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={rev} onChange={e => setRev(Number(e.target.value) || 0)} /></div>
         <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Notes</label><input className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={notes} onChange={e => setNotes(e.target.value)} /></div>
       </div>
-      <div className="flex gap-2 mt-4"><button onClick={() => onSave({ id: "r" + Date.now(), referrerId, referredClientId: referredId, date, source, status, notes, revenueGenerated: rev })} disabled={!referrerId} className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40">Save</button><button onClick={onCancel} className="border border-gray-200 text-gray-600 px-4 py-2 rounded-lg text-sm hover:bg-gray-50">Cancel</button></div>
+      <div className="flex gap-2 mt-4"><button onClick={() => onSave({ id: "r" + Date.now(), referrerId, referredClientId: referredId, date, source, status, notes, revenueGenerated: rev })} disabled={!referrerId} className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40">Save</button><button onClick={onCancel} className={`border px-4 py-2 rounded-lg text-sm ${darkMode ? "border-slate-600 text-gray-300 hover:bg-slate-700" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>Cancel</button></div>
     </div>
   </div>;
 }
@@ -1047,6 +1510,9 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState<UserProfile>(DEFAULT_USERS[0]);
   const [darkMode, setDarkMode] = useState(false);
+
+  // For baseline auto-advance
+  const [baselineAutoAdvance, setBaselineAutoAdvance] = useState(false);
 
   useEffect(() => {
     loadData().then(d => { setData(d); setLoading(false); });
@@ -1063,7 +1529,7 @@ export default function App() {
   const persist = useCallback(async (nd: AppData) => { setData(nd); saveData(nd); }, []);
 
   const visibleClients = useMemo(() => filterByAdvisor(data?.clients || [], currentUser), [data?.clients, currentUser]);
-  const stats = useClientStats(visibleClients, data?.scores || []);
+  const stats = useClientStats(visibleClients, data?.scores || [], data?.npsFeedback || [], data?.settings);
   const selected = data ? (data.clients || []).find(c => c.id === selectedId) : null;
   const selectedStat = stats.find(c => c.id === selectedId);
   const alertCount = stats.filter(c => c.status === "AT RISK").length + stats.filter(c => c.anniversaryDays != null && c.anniversaryDays <= 30).length;
@@ -1077,14 +1543,24 @@ export default function App() {
   const handleSaveScore = async (s: Score) => {
     const idx = data.scores.findIndex(x => x.clientId === s.clientId && x.year === s.year && x.month === s.month);
     const ns = [...data.scores]; if (idx >= 0) ns[idx] = s; else ns.push(s);
-    await persist({ ...data, scores: ns });
+
+    // Mark baseline completed if first score for this client
+    const clientScoreCount = data.scores.filter(x => x.clientId === s.clientId).length;
+    let updatedClients = data.clients;
+    if (clientScoreCount === 0 || (idx < 0 && clientScoreCount === 0)) {
+      updatedClients = data.clients.map(c =>
+        c.id === s.clientId ? { ...c, baselineCompletedAt: c.baselineCompletedAt || new Date().toISOString() } : c
+      );
+    }
+
+    await persist({ ...data, scores: ns, clients: updatedClients });
 
     // Push to Wealthbox if enabled and client has wealthboxId
     const client = data.clients.find(c => c.id === s.clientId);
     if (data.settings?.wealthboxEnabled && client?.wealthboxId) {
       const score = calcScore(s.scores);
       if (score !== null) {
-        const status = getStatus(score) || "WATCH";
+        const status = getStatus(score, data.settings) || "WATCH";
         const dims = {
           engagement: dimAvg(s.scores, "Engagement") || 0,
           responsiveness: dimAvg(s.scores, "Responsiveness") || 0,
@@ -1096,9 +1572,28 @@ export default function App() {
           await pushScoreToWealthbox(client.wealthboxId, score, status, dims);
         } catch (error) {
           console.error('Failed to push score to Wealthbox:', error);
-          // Don't block the save if Wealthbox push fails
         }
       }
+    }
+
+    // If baseline auto-advance, find next unscored client
+    if (baselineAutoAdvance) {
+      const allStats = visibleClients.map(c => {
+        const scoreCount = ns.filter(x => x.clientId === c.id).length;
+        return { ...c, scoreCount };
+      });
+      const nextUnscored = allStats.find(c => c.scoreCount === 0 && c.id !== s.clientId);
+      if (nextUnscored) {
+        setSelectedId(nextUnscored.id);
+        setView("score");
+        return;
+      }
+      // All done, go back to baseline tab
+      setBaselineAutoAdvance(false);
+      setView("dashboard");
+      setTab("baseline");
+      setSelectedId(null);
+      return;
     }
 
     setView("detail");
@@ -1114,6 +1609,11 @@ export default function App() {
   const handleSaveWow = async (w: Wow) => { await persist({ ...data, wows: [...(data.wows || []), w] }); setView("detail"); };
   const handleSaveRef = async (r: Referral) => { await persist({ ...data, referrals: [...(data.referrals || []), r] }); setView("dashboard"); setTab("referrals"); };
 
+  const handleAddNPSFeedback = async (fb: NPSFeedback) => {
+    const updated = [...(data.npsFeedback || []), fb];
+    await persist({ ...data, npsFeedback: updated });
+  };
+
   const handleExportClientPDF = () => {
     if (!selectedStat) return;
     exportClientPDF(selectedStat, data.scores, data.wows, data.referrals || []);
@@ -1125,25 +1625,19 @@ export default function App() {
     await persist({ ...data, settings });
   };
 
+  const handleCSVImport = async (clients: Client[]) => {
+    const mergedClients = [...data.clients, ...clients];
+    await persist({ ...data, clients: mergedClients });
+  };
+
   const handleWealthboxSync = async () => {
     try {
       const wealthboxClients = await syncFromWealthbox();
 
-      // Build a map of existing clients by wealthboxId
-      const existingByWealthboxId = new Map(
-        data.clients
-          .filter(c => c.wealthboxId)
-          .map(c => [c.wealthboxId!, c])
-      );
-
       const updatedClients = data.clients.map(existingClient => {
         if (!existingClient.wealthboxId) return existingClient;
-
-        // Find the matching Wealthbox client
         const wealthboxClient = wealthboxClients.find(wc => wc.wealthboxId === existingClient.wealthboxId);
         if (!wealthboxClient) return existingClient;
-
-        // Update metadata fields but preserve the name (user may have edited it)
         return {
           ...existingClient,
           tier: wealthboxClient.tier,
@@ -1152,11 +1646,9 @@ export default function App() {
           onboardDate: wealthboxClient.onboardDate,
           referralSource: wealthboxClient.referralSource,
           referredBy: wealthboxClient.referredBy,
-          // name is intentionally NOT updated to preserve user edits
         };
       });
 
-      // Add new clients that don't exist yet (by wealthboxId)
       const existingWealthboxIds = new Set(data.clients.map(c => c.wealthboxId).filter(Boolean));
       const newClients = wealthboxClients.filter(wc => !existingWealthboxIds.has(wc.wealthboxId));
 
@@ -1181,8 +1673,18 @@ export default function App() {
     }
   };
 
+  const handleBaselineScore = (clientId: string) => {
+    setSelectedId(clientId);
+    setBaselineAutoAdvance(true);
+    setView("score");
+  };
+
   const handleReset = async () => {
-    await persist({ clients: DEFAULT_CLIENTS, scores: DEFAULT_SCORES, wows: DEFAULT_WOWS, referrals: DEFAULT_REFERRALS, settings: { referralSources: REFERRAL_SOURCES } });
+    await persist({
+      clients: DEFAULT_CLIENTS, scores: DEFAULT_SCORES, wows: DEFAULT_WOWS,
+      referrals: DEFAULT_REFERRALS, npsFeedback: DEFAULT_NPS,
+      settings: { referralSources: REFERRAL_SOURCES, pods: DEFAULT_PODS }
+    });
     setView("dashboard"); setSelectedId(null); setTab("overview");
   };
 
@@ -1196,13 +1698,13 @@ export default function App() {
             <img src={darkMode ? "/ffo-logo-white.png" : "/ffo-logo.png"} alt="FFO Logo" className="h-8 sm:h-10 w-auto" />
           </div>
           <div className="flex items-center gap-1.5 sm:gap-3">
-            <span className={`text-xs hidden md:inline ${darkMode ? "text-white" : "text-gray-600"}`}>{visibleClients.length} clients · {fmtM(visibleClients.reduce((s, c) => s + getFee(c), 0))}/mo</span>
-            {canExport(currentUser) && <button onClick={handleExportPortfolioPDF} className="text-xs text-blue-600 hover:text-blue-800 font-medium hidden md:inline">📄 Portfolio PDF</button>}
+            <span className={`text-xs hidden md:inline ${darkMode ? "text-white" : "text-gray-600"}`}>{visibleClients.length} clients {"\u00B7"} {fmtM(visibleClients.reduce((s, c) => s + getFee(c), 0))}/mo</span>
+            {canExport(currentUser) && <button onClick={handleExportPortfolioPDF} className="text-xs text-blue-600 hover:text-blue-800 font-medium hidden md:inline">Portfolio PDF</button>}
             <select className={`text-[10px] sm:text-xs px-1.5 sm:px-2 py-1 rounded-lg font-medium ${roleBg}`} value={currentUser.id} onChange={e => { const u = DEFAULT_USERS.find(x => x.id === e.target.value); if (u) setCurrentUser(u); setView("dashboard"); setSelectedId(null); }}>
               {DEFAULT_USERS.map(u => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)}
             </select>
-            <button onClick={toggleDarkMode} className={`text-base sm:text-lg ${darkMode ? "text-gray-300 hover:text-white" : "text-gray-600 hover:text-gray-900"}`} title={darkMode ? "Light mode" : "Dark mode"}>{darkMode ? "☀️" : "🌙"}</button>
-            <button onClick={handleReset} className={`text-xs hidden sm:inline ${darkMode ? "text-gray-400 hover:text-red-400" : "text-gray-400 hover:text-red-500"}`} title="Reset">↻</button>
+            <button onClick={toggleDarkMode} className={`text-base sm:text-lg ${darkMode ? "text-gray-300 hover:text-white" : "text-gray-600 hover:text-gray-900"}`} title={darkMode ? "Light mode" : "Dark mode"}>{darkMode ? "\u2600\uFE0F" : "\uD83C\uDF19"}</button>
+            <button onClick={handleReset} className={`text-xs hidden sm:inline ${darkMode ? "text-gray-400 hover:text-red-400" : "text-gray-400 hover:text-red-500"}`} title="Reset">{"\u21BB"}</button>
           </div>
         </div>
       </div>
@@ -1210,20 +1712,23 @@ export default function App() {
 
     <div className="max-w-6xl mx-auto px-3 sm:px-4 py-3 sm:py-4">
       {view === "dashboard" && <>
-        <TabNav active={tab} onChange={setTab} alertCount={alertCount} />
-        {tab === "overview" && <OverviewTab stats={stats} onSelect={go} onAdd={() => setView("addClient")} user={currentUser} darkMode={darkMode} />}
-        {tab === "ranking" && <RankingTab clients={visibleClients} scores={data.scores || []} onSelect={go} darkMode={darkMode} />}
-        {tab === "advisors" && <AdvisorTab stats={stats} darkMode={darkMode} />}
+        <TabNav active={tab} onChange={setTab} alertCount={alertCount} darkMode={darkMode} />
+        {tab === "overview" && <OverviewTab stats={stats} onSelect={go} onAdd={() => setView("addClient")} user={currentUser} darkMode={darkMode} settings={data.settings} />}
+        {tab === "baseline" && <BaselineTab stats={stats} onScoreClient={handleBaselineScore} darkMode={darkMode} settings={data.settings} />}
+        {tab === "ranking" && <RankingTab clients={visibleClients} scores={data.scores || []} onSelect={go} darkMode={darkMode} settings={data.settings} />}
+        {tab === "advisors" && <AdvisorTab stats={stats} darkMode={darkMode} settings={data.settings} />}
+        {tab === "pods" && <PodsTab stats={stats} onSelect={go} darkMode={darkMode} settings={data.settings} />}
         {tab === "compliance" && <ComplianceTab stats={stats} onSelect={go} darkMode={darkMode} />}
         {tab === "alerts" && <AlertsTab stats={stats} onSelect={go} darkMode={darkMode} />}
-        {tab === "revenue" && <RevenueTab stats={stats} darkMode={darkMode} />}
+        {tab === "revenue" && <RevenueTab stats={stats} darkMode={darkMode} settings={data.settings} />}
         {tab === "referrals" && <ReferralsTab stats={stats} referrals={data.referrals || []} onAddRef={() => setView("addRef")} referralSources={getReferralSources(data.settings)} darkMode={darkMode} />}
-        {tab === "activity" && <ActivityTab clients={visibleClients} scores={data.scores || []} wows={data.wows || []} darkMode={darkMode} />}
-        {tab === "settings" && <SettingsTab settings={data.settings || { referralSources: REFERRAL_SOURCES }} onSave={handleSaveSettings} onSync={handleWealthboxSync} onImport={handleWealthboxImport} darkMode={darkMode} />}
+        {tab === "activity" && <ActivityTab clients={visibleClients} scores={data.scores || []} wows={data.wows || []} darkMode={darkMode} settings={data.settings} />}
+        {tab === "nps" && <NPSTab stats={stats} npsFeedback={data.npsFeedback || []} onAddFeedback={handleAddNPSFeedback} darkMode={darkMode} />}
+        {tab === "settings" && <SettingsTab settings={data.settings || { referralSources: REFERRAL_SOURCES }} onSave={handleSaveSettings} onSync={handleWealthboxSync} onImport={handleWealthboxImport} onCSVImport={handleCSVImport} darkMode={darkMode} currentUser={currentUser} />}
       </>}
 
-      {view === "detail" && selectedStat && <ClientDetail client={selectedStat} scores={data.scores || []} wows={data.wows || []} referrals={data.referrals || []} onBack={back} onScore={() => setView("score")} onAddWow={() => setView("addWow")} onEditClient={() => setView("editClient")} onExportPDF={handleExportClientPDF} user={currentUser} darkMode={darkMode} />}
-      {view === "score" && selected && <ScoringForm client={selected} existingScore={(data.scores || []).find(s => s.clientId === selectedId && s.year === new Date().getFullYear() && s.month === new Date().getMonth())} onSave={handleSaveScore} onCancel={() => setView("detail")} darkMode={darkMode} />}
+      {view === "detail" && selectedStat && <ClientDetail client={selectedStat} scores={data.scores || []} wows={data.wows || []} referrals={data.referrals || []} onBack={back} onScore={() => setView("score")} onAddWow={() => setView("addWow")} onEditClient={() => setView("editClient")} onExportPDF={handleExportClientPDF} user={currentUser} darkMode={darkMode} settings={data.settings} />}
+      {view === "score" && selected && <ScoringForm client={selected} existingScore={(data.scores || []).find(s => s.clientId === selectedId && s.year === new Date().getFullYear() && s.month === new Date().getMonth())} onSave={handleSaveScore} onCancel={() => { setBaselineAutoAdvance(false); if (selectedId) setView("detail"); else { setView("dashboard"); setTab("baseline"); } }} darkMode={darkMode} settings={data.settings} />}
       {view === "addClient" && <ClientForm onSave={handleSaveClient} onCancel={back} referralSources={getReferralSources(data.settings)} darkMode={darkMode} />}
       {view === "editClient" && selected && <ClientForm client={selected} onSave={handleSaveClient} onCancel={() => setView("detail")} referralSources={getReferralSources(data.settings)} darkMode={darkMode} />}
       {view === "addWow" && selected && <WowForm clientId={selectedId!} onSave={handleSaveWow} onCancel={() => setView("detail")} darkMode={darkMode} />}
@@ -1231,4 +1736,3 @@ export default function App() {
     </div>
   </div>;
 }
-
