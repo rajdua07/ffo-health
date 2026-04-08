@@ -1435,6 +1435,9 @@ function ClientForm({ client, onSave, onCancel, referralSources, darkMode }: { c
   const [mFee, setMFee] = useState(client?.monthlyFee ?? TIER_REVENUE.FFO);
   const [refSrc, setRefSrc] = useState(client?.referralSource ?? "");
   const [refBy, setRefBy] = useState(client?.referredBy ?? "");
+  const [wbId, setWbId] = useState(client?.wealthboxId ?? "");
+  const [pod, setPod] = useState(client?.pod ?? "");
+  const [wpa, setWpa] = useState(client?.wpa ?? "");
 
   return <div className="space-y-5">
     <button onClick={onCancel} className="text-sm text-blue-600 hover:text-blue-800">{"\u2190"} Back</button>
@@ -1454,9 +1457,14 @@ function ClientForm({ client, onSave, onCancel, referralSources, darkMode }: { c
           <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Referral Source</label><select className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={refSrc} onChange={e => setRefSrc(e.target.value)}><option value="">Select...</option>{sources.map(s => <option key={s}>{s}</option>)}</select></div>
           <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Referred By</label><input className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200 placeholder-gray-500" : "border-gray-200 bg-white"}`} value={refBy} onChange={e => setRefBy(e.target.value)} placeholder="Client name or COI" /></div>
         </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Pod</label><select className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={pod} onChange={e => setPod(e.target.value)}><option value="">Auto (by advisor)</option>{DEFAULT_PODS.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
+          <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>WPA / Wealth Planner</label><input className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200 placeholder-gray-500" : "border-gray-200 bg-white"}`} value={wpa} onChange={e => setWpa(e.target.value)} placeholder="e.g. Thea" /></div>
+        </div>
+        <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Wealthbox Contact ID</label><input className={`w-full border rounded-lg px-3 py-2 text-sm font-mono ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200 placeholder-gray-500" : "border-gray-200 bg-white"}`} value={wbId} onChange={e => setWbId(e.target.value)} placeholder="Paste Wealthbox contact ID to enable exec summary" /></div>
       </div>
       <div className="flex gap-2 mt-4">
-        <button onClick={() => onSave({ id: client?.id || ("c" + Date.now()), name, tier, leadAdvisor: adv, onboardDate: date, monthlyFee: mFee, referralSource: refSrc, referredBy: refBy })} disabled={!name.trim()} className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40">Save</button>
+        <button onClick={() => onSave({ id: client?.id || ("c" + Date.now()), name, tier, leadAdvisor: adv, onboardDate: date, monthlyFee: mFee, referralSource: refSrc, referredBy: refBy, wealthboxId: wbId || undefined, pod: pod || undefined, wpa: wpa || undefined })} disabled={!name.trim()} className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40">Save</button>
         <button onClick={onCancel} className={`border px-4 py-2 rounded-lg text-sm ${darkMode ? "border-slate-600 text-gray-300 hover:bg-slate-700" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>Cancel</button>
       </div>
     </div>
@@ -1601,7 +1609,8 @@ export default function App() {
 
   const handleSaveClient = async (c: Client) => {
     const idx = data.clients.findIndex(x => x.id === c.id);
-    const nc = [...data.clients]; if (idx >= 0) nc[idx] = c; else nc.push(c);
+    const nc = [...data.clients];
+    if (idx >= 0) { nc[idx] = { ...nc[idx], ...c }; } else nc.push(c);
     await persist({ ...data, clients: nc });
     if (view === "addClient") { setSelectedId(c.id); setView("detail"); } else setView("detail");
   };
