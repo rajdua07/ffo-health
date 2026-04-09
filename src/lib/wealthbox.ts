@@ -212,33 +212,14 @@ export async function getNotesForContact(contactId: string): Promise<Array<{
   id: string; content: string; created_at: string;
 }>> {
   try {
-    // Notes response uses key "status_updates", not "notes"
-    // Fetch last page for most recent notes
-    const first = await wealthboxFetch(
-      `/notes?resource_id=${contactId}&resource_type=Contact&per_page=30&page=1`
+    const data = await wealthboxFetch(
+      `/notes?resource_id=${contactId}&resource_type=Contact&per_page=30&order=desc`
     );
-    const totalPages = first.meta?.total_pages || 1;
-    const items = first.status_updates || first.notes || [];
-
-    if (totalPages > 1) {
-      // Fetch last page for most recent
-      const last = await wealthboxFetch(
-        `/notes?resource_id=${contactId}&resource_type=Contact&per_page=30&page=${totalPages}`
-      );
-      const lastItems = last.status_updates || last.notes || [];
-      items.push(...lastItems);
-    }
-
-    // Deduplicate and sort most recent first
-    const seen = new Set<string>();
-    return items
-      .filter((n: any) => { const id = String(n.id); if (seen.has(id)) return false; seen.add(id); return true; })
-      .map((n: any) => ({
-        id: n.id,
-        content: (n.content || '').replace(/<[^>]*>/g, '').slice(0, 500),
-        created_at: n.created_at,
-      }))
-      .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    return (data.status_updates || data.notes || []).map((n: any) => ({
+      id: n.id,
+      content: (n.content || '').replace(/<[^>]*>/g, '').slice(0, 500),
+      created_at: n.created_at,
+    }));
   } catch {
     return [];
   }
