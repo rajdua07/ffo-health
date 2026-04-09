@@ -164,16 +164,28 @@ export function resolveUserName(idOrObj: any): string {
 
 export async function getCompletedTasksForContact(contactId: string): Promise<WealthboxTask[]> {
   try {
-    // Use linked_to for reliable contact association
-    const data: { tasks?: WealthboxTask[] } = await wealthboxFetch(
-      `/tasks?linked_to_type=Contact&linked_to_id=${contactId}&completed=true&per_page=50`
+    // First request to get total pages
+    const first = await wealthboxFetch(
+      `/tasks?linked_to_type=Contact&linked_to_id=${contactId}&completed=true&per_page=50&page=1`
     );
-    if (data.tasks && data.tasks.length > 0) return data.tasks;
-    // Fallback to resource_id approach
-    const data2: { tasks?: WealthboxTask[] } = await wealthboxFetch(
-      `/tasks?resource_id=${contactId}&resource_type=Contact&completed=true&per_page=50`
+    const totalPages = first.meta?.total_pages || 1;
+
+    if (totalPages <= 1) return first.tasks || [];
+
+    // Fetch the last 2 pages (most recent completed tasks)
+    const pages = [totalPages, Math.max(1, totalPages - 1)];
+    const results = await Promise.all(
+      pages.map(p => wealthboxFetch(
+        `/tasks?linked_to_type=Contact&linked_to_id=${contactId}&completed=true&per_page=50&page=${p}`
+      ).then(d => d.tasks || []).catch(() => []))
     );
-    return data2.tasks || [];
+
+    // Combine, deduplicate by id, sort most recent first
+    const allTasks: WealthboxTask[] = results.flat();
+    const seen = new Set<string>();
+    return allTasks
+      .filter(t => { const id = String(t.id); if (seen.has(id)) return false; seen.add(id); return true; })
+      .sort((a, b) => new Date(b.completed_at || b.due_date || '').getTime() - new Date(a.completed_at || a.due_date || '').getTime());
   } catch {
     return [];
   }
@@ -181,14 +193,27 @@ export async function getCompletedTasksForContact(contactId: string): Promise<We
 
 export async function getOpenTasksForContact(contactId: string): Promise<WealthboxTask[]> {
   try {
-    const data: { tasks?: WealthboxTask[] } = await wealthboxFetch(
-      `/tasks?linked_to_type=Contact&linked_to_id=${contactId}&completed=false&per_page=50`
+    // First request to get total pages
+    const first = await wealthboxFetch(
+      `/tasks?linked_to_type=Contact&linked_to_id=${contactId}&completed=false&per_page=50&page=1`
     );
-    if (data.tasks && data.tasks.length > 0) return data.tasks;
-    const data2: { tasks?: WealthboxTask[] } = await wealthboxFetch(
-      `/tasks?resource_id=${contactId}&resource_type=Contact&completed=false&per_page=50`
+    const totalPages = first.meta?.total_pages || 1;
+
+    if (totalPages <= 1) return first.tasks || [];
+
+    // Fetch last 2 pages (most recently created/updated open tasks)
+    const pages = [totalPages, Math.max(1, totalPages - 1)];
+    const results = await Promise.all(
+      pages.map(p => wealthboxFetch(
+        `/tasks?linked_to_type=Contact&linked_to_id=${contactId}&completed=false&per_page=50&page=${p}`
+      ).then(d => d.tasks || []).catch(() => []))
     );
-    return data2.tasks || [];
+
+    const allTasks: WealthboxTask[] = results.flat();
+    const seen = new Set<string>();
+    return allTasks
+      .filter(t => { const id = String(t.id); if (seen.has(id)) return false; seen.add(id); return true; })
+      .sort((a, b) => new Date(b.due_date || b.created_at || '').getTime() - new Date(a.due_date || a.created_at || '').getTime());
   } catch {
     return [];
   }
