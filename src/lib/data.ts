@@ -343,7 +343,7 @@ export const DEFAULT_USERS: UserProfile[] = [
 ];
 
 export const DEFAULT_CLIENTS: Client[] = [
-  { id: "c1", name: "Justin Saunders", tier: "FFO Access", leadAdvisor: "Coty", pod: "pod2", wpa: "Vinny", onboardDate: "2024-08-05", monthlyFee: 1500, referralSource: "Advisor Network" },
+  { id: "c1", name: "Justin Saunders", tier: "FFO Access", leadAdvisor: "Coty", pod: "pod2", wpa: "Vinny", onboardDate: "2024-08-05", monthlyFee: 1500, referralSource: "Advisor Network", wealthboxId: "54433077" },
   { id: "c2", name: "Steve Wahl", tier: "FFO", leadAdvisor: "Landon", pod: "pod1", wpa: "Thea", onboardDate: "2025-06-01", monthlyFee: 10000, referralSource: "COI Referral", referredBy: "James Patterson, CPA" },
   { id: "c3", name: "Zac Saffron", tier: "FFO Light", leadAdvisor: "Coty", pod: "pod2", wpa: "Vinny", onboardDate: "2025-09-10", monthlyFee: 3800, referralSource: "Event/Seminar" },
   { id: "c4", name: "Victoria Duke", tier: "FFO", leadAdvisor: "Coty", pod: "pod2", wpa: "Vinny", onboardDate: "2025-04-22", monthlyFee: 9000, referralSource: "Client Referral" },

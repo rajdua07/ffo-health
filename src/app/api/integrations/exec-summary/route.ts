@@ -1,27 +1,6 @@
 import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
-import { getCompletedTasksForContact, getEventsForContact, getNotesForContact } from '@/lib/wealthbox';
-
-// === Wealthbox ===
-const WEALTHBOX_API_KEY = process.env.WEALTHBOX_API_KEY || process.env.NEXT_PUBLIC_WEALTHBOX_API_KEY;
-const WEALTHBOX_API_URL = process.env.WEALTHBOX_API_URL || 'https://api.crmworkspace.com/v1';
-
-async function wealthboxFetch(endpoint: string) {
-  const url = `${WEALTHBOX_API_URL}${endpoint}`;
-  const response = await fetch(url, {
-    headers: { 'ACCESS_TOKEN': WEALTHBOX_API_KEY || '', 'Content-Type': 'application/json' },
-  });
-  if (!response.ok) throw new Error(`Wealthbox API error: ${response.status}`);
-  return response.json();
-}
-
-async function getOpenTasksForContact(contactId: string) {
-  try {
-    const data: { tasks?: Array<{ id: string; name: string; description?: string; due_date?: string; completed: boolean }> } =
-      await wealthboxFetch(`/tasks?resource_id=${contactId}&resource_type=Contact&completed=false&per_page=50`);
-    return data.tasks || [];
-  } catch { return []; }
-}
+import { getCompletedTasksForContact, getOpenTasksForContact, getEventsForContact, getNotesForContact } from '@/lib/wealthbox';
 
 // === Slack ===
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN;
@@ -150,7 +129,7 @@ export async function POST(request: Request) {
     const [completedTasks, openTasks, events, notes, slackMessages] = await Promise.all([
       wealthboxId ? getCompletedTasksForContact(wealthboxId) : Promise.resolve([]),
       wealthboxId ? getOpenTasksForContact(wealthboxId) : Promise.resolve([]),
-      wealthboxId ? getEventsForContact(wealthboxId, sinceISO) : Promise.resolve([]),
+      wealthboxId ? getEventsForContact(wealthboxId) : Promise.resolve([]),
       wealthboxId ? getNotesForContact(wealthboxId) : Promise.resolve([]),
       getSlackChannelMessages(slackChannelId || '', sinceTs),
     ]);
@@ -178,22 +157,21 @@ export async function POST(request: Request) {
       .sort((a, b) => new Date(a.due_date!).getTime() - new Date(b.due_date!).getTime())
       .map(t => ({ name: t.name, dueDate: t.due_date, description: t.description }));
 
-    // Process Wealthbox events + notes → communication history
+    // Process Wealthbox events → meetings, calls, check-ins
+    // Process Wealthbox notes (status_updates) → communication history
     const emailThreads = [
-      ...events
-        .filter(e => ['email','Email','call','Call','meeting','Meeting'].includes(e.kind))
-        .map(e => ({
-          subject: e.title || e.kind,
-          from: e.creator?.name || 'Team',
-          snippet: (e.body || '').replace(/<[^>]*>/g, '').slice(0, 200),
-          date: e.created_at,
-        })),
+      ...events.map(e => ({
+        subject: e.title || 'Meeting',
+        from: 'Team',
+        snippet: e.description || '',
+        date: e.starts_at || e.created_at,
+      })),
       ...notes
         .filter(n => new Date(n.created_at) >= sinceDate)
         .map(n => ({
           subject: 'Note',
-          from: n.creator?.name || 'Team',
-          snippet: (n.content || '').replace(/<[^>]*>/g, '').slice(0, 200),
+          from: 'Team',
+          snippet: n.content.slice(0, 200),
           date: n.created_at,
         })),
     ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 15);
