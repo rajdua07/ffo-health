@@ -127,6 +127,7 @@ export interface ClientStat extends Client {
 
 export interface ExecSummary {
   clientId: string;
+  narrative: string;  // AI-generated briefing summary
   achievementsSinceLastCheckin: Array<{ name: string; completedAt: string; description?: string }>;
   currentPriorities: Array<{ name: string; dueDate?: string; description?: string }>;
   outstandingItems: Array<{ name: string; dueDate?: string; description?: string }>;
@@ -523,13 +524,13 @@ export async function enrichClientsWithTasks(clients: Client[]): Promise<Client[
 
 export async function fetchExecSummary(
   clientId: string, wealthboxId: string | undefined, lastScoredTs: string | null,
-  slackChannelId?: string,
+  slackChannelId?: string, clientName?: string,
 ): Promise<ExecSummary> {
   if (typeof window === "undefined") throw new Error('Not in browser');
   const response = await fetch('/api/integrations/exec-summary', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      clientId, wealthboxId, lastCheckinDate: lastScoredTs, slackChannelId,
+      clientId, wealthboxId, lastCheckinDate: lastScoredTs, slackChannelId, clientName,
     })
   });
   const data = await response.json();

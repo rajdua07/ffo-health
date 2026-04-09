@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import Anthropic from '@anthropic-ai/sdk';
 import { getCompletedTasksForContact, getEventsForContact, getNotesForContact } from '@/lib/wealthbox';
 
 // === Wealthbox ===
@@ -33,10 +34,7 @@ async function getSlackChannelMessages(channelId: string, sinceTs: number): Prom
       headers: { 'Authorization': `Bearer ${SLACK_BOT_TOKEN}`, 'Content-Type': 'application/json' },
     });
     const data = await response.json();
-    if (!data.ok) {
-      console.error('Slack API error:', data.error);
-      return [];
-    }
+    if (!data.ok) return [];
     const userIds = Array.from(new Set((data.messages || []).map((m: { user?: string }) => m.user).filter(Boolean)));
     const userNames: Record<string, string> = {};
     for (const uid of userIds as string[]) {
@@ -45,12 +43,9 @@ async function getSlackChannelMessages(channelId: string, sinceTs: number): Prom
           headers: { 'Authorization': `Bearer ${SLACK_BOT_TOKEN}` },
         });
         const userData = await userResp.json();
-        if (userData.ok) {
-          userNames[uid] = userData.user?.real_name || userData.user?.name || uid;
-        }
+        if (userData.ok) userNames[uid] = userData.user?.real_name || userData.user?.name || uid;
       } catch { userNames[uid as string] = uid as string; }
     }
-
     return (data.messages || [])
       .filter((m: { subtype?: string }) => !m.subtype)
       .map((m: { user?: string; text?: string; ts?: string }) => ({
@@ -58,18 +53,94 @@ async function getSlackChannelMessages(channelId: string, sinceTs: number): Prom
         text: (m.text || '').slice(0, 500),
         ts: new Date(Number(m.ts) * 1000).toISOString(),
       }))
-      .reverse()
-      .slice(-20);
-  } catch (error) {
-    console.error('Slack fetch error:', error);
-    return [];
+      .reverse().slice(-20);
+  } catch { return []; }
+}
+
+// === AI Narrative Generation ===
+async function generateNarrative(
+  clientName: string,
+  completedTasks: Array<{ name: string; completedAt: string; description?: string }>,
+  currentPriorities: Array<{ name: string; dueDate?: string; description?: string }>,
+  outstandingItems: Array<{ name: string; dueDate?: string; description?: string }>,
+  emailThreads: Array<{ subject: string; from: string; snippet: string; date: string }>,
+  slackMessages: Array<{ author: string; text: string; ts: string }>,
+  lastCheckinDate: string | null,
+): Promise<string> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return buildFallbackNarrative(clientName, completedTasks, currentPriorities, outstandingItems, emailThreads, slackMessages);
   }
+
+  const anthropic = new Anthropic({ apiKey });
+
+  const context = `
+CLIENT: ${clientName}
+LAST CHECK-IN: ${lastCheckinDate ? new Date(lastCheckinDate).toLocaleDateString() : 'Unknown'}
+TODAY: ${new Date().toLocaleDateString()}
+
+--- COMPLETED TASKS (since last check-in) ---
+${completedTasks.length === 0 ? 'None' : completedTasks.map(t => `- ${t.name} (completed ${new Date(t.completedAt).toLocaleDateString()})${t.description ? ': ' + t.description : ''}`).join('\n')}
+
+--- OPEN TASKS / CURRENT PRIORITIES ---
+${currentPriorities.length === 0 ? 'None' : currentPriorities.map(t => `- ${t.name}${t.dueDate ? ' (due ' + new Date(t.dueDate).toLocaleDateString() + ')' : ''}${t.description ? ': ' + t.description : ''}`).join('\n')}
+
+--- OVERDUE ITEMS ---
+${outstandingItems.length === 0 ? 'None' : outstandingItems.map(t => `- ${t.name} (was due ${new Date(t.dueDate!).toLocaleDateString()})${t.description ? ': ' + t.description : ''}`).join('\n')}
+
+--- RECENT COMMUNICATION (emails, calls, notes from CRM) ---
+${emailThreads.length === 0 ? 'None' : emailThreads.map(e => `- [${e.subject}] from ${e.from} on ${new Date(e.date).toLocaleDateString()}: ${e.snippet}`).join('\n')}
+
+--- SLACK CHANNEL ACTIVITY ---
+${slackMessages.length === 0 ? 'None' : slackMessages.map(m => `- ${m.author} (${new Date(m.ts).toLocaleDateString()}): ${m.text}`).join('\n')}
+`.trim();
+
+  const message = await anthropic.messages.create({
+    model: 'claude-sonnet-4-20250514',
+    max_tokens: 800,
+    messages: [{
+      role: 'user',
+      content: `You are an executive assistant to a lead financial advisor at a fractional family office. Based on the following client data, write a concise executive briefing for the advisor before their next check-in with this client.
+
+The briefing should:
+1. Start with a 1-2 sentence overall status ("where the client is at")
+2. Highlight what's been accomplished since the last check-in
+3. Call out what balls are in whose court — what the team owes the client, and what the client owes the team
+4. Flag any overdue items or risks
+5. Suggest 1-2 talking points for the next meeting
+
+Keep it under 250 words. Use plain language, no jargon. Be direct and actionable. Use bullet points for clarity. Do not use markdown headers.
+
+${context}`
+    }],
+  });
+
+  const textBlock = message.content.find(b => b.type === 'text');
+  return textBlock?.text || buildFallbackNarrative(clientName, completedTasks, currentPriorities, outstandingItems, emailThreads, slackMessages);
+}
+
+function buildFallbackNarrative(
+  clientName: string,
+  completedTasks: Array<{ name: string; completedAt: string }>,
+  currentPriorities: Array<{ name: string; dueDate?: string }>,
+  outstandingItems: Array<{ name: string; dueDate?: string }>,
+  emailThreads: Array<{ subject: string }>,
+  slackMessages: Array<{ text: string }>,
+): string {
+  const parts: string[] = [];
+  if (completedTasks.length > 0) parts.push(`${completedTasks.length} task${completedTasks.length > 1 ? 's' : ''} completed since last check-in.`);
+  if (currentPriorities.length > 0) parts.push(`${currentPriorities.length} open priorit${currentPriorities.length > 1 ? 'ies' : 'y'}: ${currentPriorities.slice(0, 3).map(t => t.name).join(', ')}.`);
+  if (outstandingItems.length > 0) parts.push(`${outstandingItems.length} overdue item${outstandingItems.length > 1 ? 's' : ''} need${outstandingItems.length === 1 ? 's' : ''} attention.`);
+  if (emailThreads.length > 0) parts.push(`${emailThreads.length} recent communication${emailThreads.length > 1 ? 's' : ''} in CRM.`);
+  if (slackMessages.length > 0) parts.push(`${slackMessages.length} Slack message${slackMessages.length > 1 ? 's' : ''} in channel.`);
+  if (parts.length === 0) parts.push(`No recent activity found for ${clientName}. Consider scheduling a check-in.`);
+  return parts.join(' ');
 }
 
 // === Main handler ===
 export async function POST(request: Request) {
   try {
-    const { clientId, wealthboxId, lastCheckinDate, slackChannelId } = await request.json();
+    const { clientId, wealthboxId, lastCheckinDate, slackChannelId, clientName } = await request.json();
 
     const sinceDate = lastCheckinDate ? new Date(lastCheckinDate) : new Date(Date.now() - 90 * 86400000);
     const sinceTs = sinceDate.getTime();
@@ -96,8 +167,7 @@ export async function POST(request: Request) {
     const currentPriorities = openTasks
       .filter(t => !t.due_date || new Date(t.due_date) >= now)
       .sort((a, b) => {
-        if (!a.due_date) return 1;
-        if (!b.due_date) return -1;
+        if (!a.due_date) return 1; if (!b.due_date) return -1;
         return new Date(a.due_date).getTime() - new Date(b.due_date).getTime();
       })
       .slice(0, 15)
@@ -108,13 +178,12 @@ export async function POST(request: Request) {
       .sort((a, b) => new Date(a.due_date!).getTime() - new Date(b.due_date!).getTime())
       .map(t => ({ name: t.name, dueDate: t.due_date, description: t.description }));
 
-    // Process Wealthbox events + notes → communication/email threads
-    // Events include emails, calls, meetings logged in Wealthbox
+    // Process Wealthbox events + notes → communication history
     const emailThreads = [
       ...events
-        .filter(e => e.kind === 'email' || e.kind === 'Email' || e.kind === 'call' || e.kind === 'Call' || e.kind === 'meeting' || e.kind === 'Meeting')
+        .filter(e => ['email','Email','call','Call','meeting','Meeting'].includes(e.kind))
         .map(e => ({
-          subject: e.title || `${e.kind}`,
+          subject: e.title || e.kind,
           from: e.creator?.name || 'Team',
           snippet: (e.body || '').replace(/<[^>]*>/g, '').slice(0, 200),
           date: e.created_at,
@@ -127,14 +196,24 @@ export async function POST(request: Request) {
           snippet: (n.content || '').replace(/<[^>]*>/g, '').slice(0, 200),
           date: n.created_at,
         })),
-    ]
-      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-      .slice(0, 15);
+    ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 15);
+
+    // Generate AI narrative summary
+    const narrative = await generateNarrative(
+      clientName || 'Client',
+      achievementsSinceLastCheckin,
+      currentPriorities,
+      outstandingItems,
+      emailThreads,
+      slackMessages,
+      lastCheckinDate,
+    );
 
     return NextResponse.json({
       success: true,
       summary: {
         clientId,
+        narrative,
         achievementsSinceLastCheckin,
         currentPriorities,
         outstandingItems,
