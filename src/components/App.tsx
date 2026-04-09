@@ -1261,7 +1261,7 @@ function ClientDetail({ client, scores, wows, referrals, onBack, onScore, onAddW
     try {
       const summary = await fetchExecSummary(
         client.id, client.wealthboxId || "", client.lastScoredTs,
-        client.slackChannelId, client.name, client.gmailQuery,
+        client.slackChannelId,
       );
       setExecSummary(summary);
     } catch (err) {
@@ -1352,7 +1352,7 @@ function ClientDetail({ client, scores, wows, referrals, onBack, onScore, onAddW
 
           {/* Gmail: Recent Emails */}
           {execSummary.emailThreads.length > 0 && <div className={`border-t pt-3 ${darkMode ? "border-slate-700" : "border-gray-100"}`}>
-            <h4 className={`text-xs font-semibold mb-1.5 ${darkMode ? "text-amber-400" : "text-amber-700"}`}>Recent Email Threads</h4>
+            <h4 className={`text-xs font-semibold mb-1.5 ${darkMode ? "text-amber-400" : "text-amber-700"}`}>Communication History (Wealthbox)</h4>
             {execSummary.emailThreads.slice(0, 5).map((e, i) => (
               <div key={i} className={`text-sm py-1.5 border-b last:border-0 ${darkMode ? "border-slate-700" : "border-gray-50"}`}>
                 <div className={`font-medium truncate ${darkMode ? "text-gray-200" : "text-gray-800"}`}>{e.subject}</div>
@@ -1382,7 +1382,7 @@ function ClientDetail({ client, scores, wows, referrals, onBack, onScore, onAddW
             <div>
               <button onClick={handleLoadExecSummary} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700">Load Summary</button>
               <p className={`text-xs mt-2 ${darkMode ? "text-gray-500" : "text-gray-400"}`}>
-                Pulls from {client.wealthboxId ? "Wealthbox tasks" : ""}{client.wealthboxId && client.slackChannelId ? ", " : ""}{client.slackChannelId ? "Slack channel" : ""}{(client.wealthboxId || client.slackChannelId) ? " and " : ""}Gmail threads
+                Pulls from {client.wealthboxId ? "Wealthbox (tasks, emails, notes)" : "no Wealthbox ID"}{client.slackChannelId ? " + Slack channel" : ""}
               </p>
             </div>}
         </div>

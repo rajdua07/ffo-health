@@ -152,6 +152,42 @@ export async function getCompletedTasksForContact(contactId: string): Promise<We
   }
 }
 
+export async function getEventsForContact(contactId: string, since?: string): Promise<Array<{
+  id: string; kind: string; title?: string; body?: string; created_at: string; creator?: { name: string };
+}>> {
+  try {
+    let endpoint = `/events?resource_id=${contactId}&resource_type=Contact&per_page=50`;
+    if (since) endpoint += `&created_since=${since}`;
+    const data = await wealthboxFetch(endpoint);
+    return data.events || [];
+  } catch {
+    // Try alternate endpoint — some Wealthbox versions use /activities
+    try {
+      let endpoint = `/activities?contact_id=${contactId}&per_page=50`;
+      if (since) endpoint += `&since=${since}`;
+      const data = await wealthboxFetch(endpoint);
+      return (data.activities || []).map((a: any) => ({
+        id: a.id, kind: a.kind || a.type || 'note',
+        title: a.title || a.subject || '', body: a.body || a.description || '',
+        created_at: a.created_at, creator: a.creator || a.user,
+      }));
+    } catch {
+      return [];
+    }
+  }
+}
+
+export async function getNotesForContact(contactId: string): Promise<Array<{
+  id: string; content: string; created_at: string; creator?: { name: string };
+}>> {
+  try {
+    const data = await wealthboxFetch(`/notes?resource_id=${contactId}&resource_type=Contact&per_page=30`);
+    return data.notes || [];
+  } catch {
+    return [];
+  }
+}
+
 export async function updateWealthboxContact(id: string, customFields: Record<string, any>): Promise<boolean> {
   try {
     await wealthboxFetch(`/contacts/${id}`, {

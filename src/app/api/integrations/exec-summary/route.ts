@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getCompletedTasksForContact } from '@/lib/wealthbox';
+import { getCompletedTasksForContact, getEventsForContact, getNotesForContact } from '@/lib/wealthbox';
 
 // === Wealthbox ===
 const WEALTHBOX_API_KEY = process.env.WEALTHBOX_API_KEY || process.env.NEXT_PUBLIC_WEALTHBOX_API_KEY;
@@ -37,7 +37,6 @@ async function getSlackChannelMessages(channelId: string, sinceTs: number): Prom
       console.error('Slack API error:', data.error);
       return [];
     }
-    // Resolve user names for the messages
     const userIds = Array.from(new Set((data.messages || []).map((m: { user?: string }) => m.user).filter(Boolean)));
     const userNames: Record<string, string> = {};
     for (const uid of userIds as string[]) {
@@ -53,50 +52,16 @@ async function getSlackChannelMessages(channelId: string, sinceTs: number): Prom
     }
 
     return (data.messages || [])
-      .filter((m: { subtype?: string }) => !m.subtype) // skip join/leave/etc
+      .filter((m: { subtype?: string }) => !m.subtype)
       .map((m: { user?: string; text?: string; ts?: string }) => ({
         author: userNames[m.user || ''] || m.user || 'Unknown',
         text: (m.text || '').slice(0, 500),
         ts: new Date(Number(m.ts) * 1000).toISOString(),
       }))
-      .reverse() // chronological order
-      .slice(-20); // last 20 messages
+      .reverse()
+      .slice(-20);
   } catch (error) {
     console.error('Slack fetch error:', error);
-    return [];
-  }
-}
-
-// === Gmail ===
-const GMAIL_ACCESS_TOKEN = process.env.GMAIL_ACCESS_TOKEN;
-
-async function getGmailThreads(query: string, maxResults = 10): Promise<Array<{ subject: string; from: string; snippet: string; date: string }>> {
-  if (!GMAIL_ACCESS_TOKEN || !query) return [];
-  try {
-    const searchUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=${maxResults}`;
-    const response = await fetch(searchUrl, {
-      headers: { 'Authorization': `Bearer ${GMAIL_ACCESS_TOKEN}` },
-    });
-    const data = await response.json();
-    if (!data.messages) return [];
-
-    const threads: Array<{ subject: string; from: string; snippet: string; date: string }> = [];
-    for (const msg of data.messages.slice(0, maxResults)) {
-      try {
-        const msgResp = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`, {
-          headers: { 'Authorization': `Bearer ${GMAIL_ACCESS_TOKEN}` },
-        });
-        const msgData = await msgResp.json();
-        const headers = msgData.payload?.headers || [];
-        const subject = headers.find((h: { name: string }) => h.name === 'Subject')?.value || '(no subject)';
-        const from = headers.find((h: { name: string }) => h.name === 'From')?.value || '';
-        const date = headers.find((h: { name: string }) => h.name === 'Date')?.value || '';
-        threads.push({ subject, from, snippet: (msgData.snippet || '').slice(0, 200), date });
-      } catch { /* skip individual message errors */ }
-    }
-    return threads;
-  } catch (error) {
-    console.error('Gmail fetch error:', error);
     return [];
   }
 }
@@ -104,27 +69,29 @@ async function getGmailThreads(query: string, maxResults = 10): Promise<Array<{ 
 // === Main handler ===
 export async function POST(request: Request) {
   try {
-    const { clientId, wealthboxId, lastCheckinDate, slackChannelId, clientName, gmailQuery } = await request.json();
+    const { clientId, wealthboxId, lastCheckinDate, slackChannelId } = await request.json();
 
     const sinceDate = lastCheckinDate ? new Date(lastCheckinDate) : new Date(Date.now() - 90 * 86400000);
     const sinceTs = sinceDate.getTime();
+    const sinceISO = sinceDate.toISOString().split('T')[0];
 
     // Fetch all sources in parallel
-    const [completedTasks, openTasks, slackMessages, emailThreads] = await Promise.all([
+    const [completedTasks, openTasks, events, notes, slackMessages] = await Promise.all([
       wealthboxId ? getCompletedTasksForContact(wealthboxId) : Promise.resolve([]),
       wealthboxId ? getOpenTasksForContact(wealthboxId) : Promise.resolve([]),
+      wealthboxId ? getEventsForContact(wealthboxId, sinceISO) : Promise.resolve([]),
+      wealthboxId ? getNotesForContact(wealthboxId) : Promise.resolve([]),
       getSlackChannelMessages(slackChannelId || '', sinceTs),
-      getGmailThreads(gmailQuery || clientName || '', 10),
     ]);
 
-    // Process Wealthbox achievements
+    // Process completed tasks → achievements
     const achievementsSinceLastCheckin = completedTasks
       .filter(t => t.completed_at && new Date(t.completed_at) >= sinceDate)
       .sort((a, b) => new Date(b.completed_at!).getTime() - new Date(a.completed_at!).getTime())
       .slice(0, 20)
       .map(t => ({ name: t.name, completedAt: t.completed_at!, description: t.description }));
 
-    // Process open tasks into priorities vs outstanding
+    // Process open tasks → priorities vs outstanding
     const now = new Date();
     const currentPriorities = openTasks
       .filter(t => !t.due_date || new Date(t.due_date) >= now)
@@ -140,6 +107,29 @@ export async function POST(request: Request) {
       .filter(t => t.due_date && new Date(t.due_date) < now)
       .sort((a, b) => new Date(a.due_date!).getTime() - new Date(b.due_date!).getTime())
       .map(t => ({ name: t.name, dueDate: t.due_date, description: t.description }));
+
+    // Process Wealthbox events + notes → communication/email threads
+    // Events include emails, calls, meetings logged in Wealthbox
+    const emailThreads = [
+      ...events
+        .filter(e => e.kind === 'email' || e.kind === 'Email' || e.kind === 'call' || e.kind === 'Call' || e.kind === 'meeting' || e.kind === 'Meeting')
+        .map(e => ({
+          subject: e.title || `${e.kind}`,
+          from: e.creator?.name || 'Team',
+          snippet: (e.body || '').replace(/<[^>]*>/g, '').slice(0, 200),
+          date: e.created_at,
+        })),
+      ...notes
+        .filter(n => new Date(n.created_at) >= sinceDate)
+        .map(n => ({
+          subject: 'Note',
+          from: n.creator?.name || 'Team',
+          snippet: (n.content || '').replace(/<[^>]*>/g, '').slice(0, 200),
+          date: n.created_at,
+        })),
+    ]
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .slice(0, 15);
 
     return NextResponse.json({
       success: true,

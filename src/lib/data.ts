@@ -34,7 +34,6 @@ export interface Client {
   completedTasks?: Array<{ name: string; completedAt: string; description?: string }>;
   baselineCompletedAt?: string; // timestamp when baseline scoring was completed
   slackChannelId?: string;      // Slack channel ID for client comms (e.g. C0ABCDEF123)
-  gmailQuery?: string;          // Gmail search query override (default: client name)
 }
 
 export interface Score {
@@ -524,14 +523,13 @@ export async function enrichClientsWithTasks(clients: Client[]): Promise<Client[
 
 export async function fetchExecSummary(
   clientId: string, wealthboxId: string | undefined, lastScoredTs: string | null,
-  slackChannelId?: string, clientName?: string, gmailQuery?: string,
+  slackChannelId?: string,
 ): Promise<ExecSummary> {
   if (typeof window === "undefined") throw new Error('Not in browser');
   const response = await fetch('/api/integrations/exec-summary', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      clientId, wealthboxId, lastCheckinDate: lastScoredTs,
-      slackChannelId, clientName, gmailQuery,
+      clientId, wealthboxId, lastCheckinDate: lastScoredTs, slackChannelId,
     })
   });
   const data = await response.json();
