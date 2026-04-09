@@ -1256,11 +1256,13 @@ function ClientDetail({ client, scores, wows, referrals, onBack, onScore, onAddW
   const [execError, setExecError] = useState("");
 
   const handleLoadExecSummary = async () => {
-    if (!client.wealthboxId) return;
     setExecLoading(true);
     setExecError("");
     try {
-      const summary = await fetchExecSummary(client.id, client.wealthboxId, client.lastScoredTs);
+      const summary = await fetchExecSummary(
+        client.id, client.wealthboxId || "", client.lastScoredTs,
+        client.slackChannelId, client.name, client.gmailQuery,
+      );
       setExecSummary(summary);
     } catch (err) {
       setExecError(err instanceof Error ? err.message : "Failed to load exec summary");
@@ -1299,45 +1301,90 @@ function ClientDetail({ client, scores, wows, referrals, onBack, onScore, onAddW
 
     {/* Exec Summary */}
     <div className={`rounded-xl border p-4 sm:p-5 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
-      <h3 className={`text-sm font-semibold mb-3 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>EXEC SUMMARY</h3>
-      {!client.wealthboxId ? (
-        <p className={`text-sm ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Connect to Wealthbox to view exec summary</p>
-      ) : execSummary ? (
-        <div className="space-y-3">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className={`text-sm font-semibold ${darkMode ? "text-gray-400" : "text-gray-500"}`}>EXEC SUMMARY</h3>
+        {execSummary && <button onClick={handleLoadExecSummary} disabled={execLoading} className={`text-sm px-2 py-1 rounded-lg ${execLoading ? "opacity-50" : ""} ${darkMode ? "text-gray-400 hover:text-blue-400 hover:bg-slate-700" : "text-gray-400 hover:text-blue-600 hover:bg-gray-100"}`} title="Refresh">{execLoading ? "\u21BB" : "\u21BB"}</button>}
+      </div>
+      {execSummary ? (
+        <div className="space-y-4">
+          {/* Wealthbox: Achievements */}
           {execSummary.achievementsSinceLastCheckin.length > 0 && <div>
-            <h4 className={`text-xs font-semibold mb-1 ${darkMode ? "text-green-400" : "text-green-700"}`}>Achievements Since Last Check-in</h4>
+            <h4 className={`text-xs font-semibold mb-1.5 flex items-center gap-1.5 ${darkMode ? "text-green-400" : "text-green-700"}`}><span>Achievements Since Last Check-in</span></h4>
             {execSummary.achievementsSinceLastCheckin.map((a, i) => (
               <div key={i} className={`text-sm py-1 ${darkMode ? "text-gray-300" : "text-gray-700"}`}>
-                {"\u2022"} {a.name} <span className={`text-xs ${darkMode ? "text-gray-500" : "text-gray-400"}`}>{a.completedAt}</span>
-                {a.description && <span className={`text-xs block ml-3 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{a.description}</span>}
+                {"\u2713"} {a.name} <span className={`text-xs ${darkMode ? "text-gray-500" : "text-gray-400"}`}>{new Date(a.completedAt).toLocaleDateString()}</span>
+                {a.description && <span className={`text-xs block ml-4 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{a.description}</span>}
               </div>
             ))}
           </div>}
+
+          {/* Wealthbox: Current Priorities */}
           {execSummary.currentPriorities.length > 0 && <div>
-            <h4 className={`text-xs font-semibold mb-1 ${darkMode ? "text-blue-400" : "text-blue-700"}`}>Current Priorities</h4>
+            <h4 className={`text-xs font-semibold mb-1.5 ${darkMode ? "text-blue-400" : "text-blue-700"}`}>Current Priorities</h4>
             {execSummary.currentPriorities.map((p, i) => (
               <div key={i} className={`text-sm py-1 ${darkMode ? "text-gray-300" : "text-gray-700"}`}>
-                {"\u2022"} {p.name} {p.dueDate && <span className={`text-xs ${darkMode ? "text-gray-500" : "text-gray-400"}`}>Due: {p.dueDate}</span>}
-                {p.description && <span className={`text-xs block ml-3 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{p.description}</span>}
+                {"\u2022"} {p.name} {p.dueDate && <span className={`text-xs ${darkMode ? "text-gray-500" : "text-gray-400"}`}>Due: {new Date(p.dueDate).toLocaleDateString()}</span>}
               </div>
             ))}
           </div>}
+
+          {/* Wealthbox: Outstanding */}
           {execSummary.outstandingItems.length > 0 && <div>
-            <h4 className={`text-xs font-semibold mb-1 ${darkMode ? "text-red-400" : "text-red-700"}`}>Outstanding / Overdue Items</h4>
+            <h4 className={`text-xs font-semibold mb-1.5 ${darkMode ? "text-red-400" : "text-red-700"}`}>Outstanding / Overdue</h4>
             {execSummary.outstandingItems.map((o, i) => (
               <div key={i} className={`text-sm py-1 ${darkMode ? "text-gray-300" : "text-gray-700"}`}>
-                {"\u2022"} {o.name} {o.dueDate && <span className={`text-xs ${darkMode ? "text-gray-500" : "text-gray-400"}`}>Due: {o.dueDate}</span>}
-                {o.description && <span className={`text-xs block ml-3 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{o.description}</span>}
+                {"\u26A0"} {o.name} {o.dueDate && <span className={`text-xs font-medium ${darkMode ? "text-red-400" : "text-red-600"}`}>Due: {new Date(o.dueDate).toLocaleDateString()}</span>}
               </div>
             ))}
           </div>}
-          {execSummary.lastCheckinDate && <div className={`text-[10px] mt-2 ${darkMode ? "text-gray-500" : "text-gray-400"}`}>Last check-in: {execSummary.lastCheckinDate} | Generated: {execSummary.generatedAt}</div>}
+
+          {/* Slack: Recent Communication */}
+          {execSummary.slackMessages.length > 0 && <div className={`border-t pt-3 ${darkMode ? "border-slate-700" : "border-gray-100"}`}>
+            <h4 className={`text-xs font-semibold mb-1.5 ${darkMode ? "text-purple-400" : "text-purple-700"}`}>Recent Slack Activity</h4>
+            {execSummary.slackMessages.slice(-8).map((m, i) => (
+              <div key={i} className={`text-sm py-1 flex gap-2 ${darkMode ? "text-gray-300" : "text-gray-700"}`}>
+                <span className={`text-xs font-semibold shrink-0 w-20 truncate ${darkMode ? "text-purple-300" : "text-purple-600"}`}>{m.author}</span>
+                <span className="flex-1 truncate">{m.text}</span>
+                <span className={`text-[10px] shrink-0 ${darkMode ? "text-gray-500" : "text-gray-400"}`}>{timeAgo(m.ts)}</span>
+              </div>
+            ))}
+          </div>}
+
+          {/* Gmail: Recent Emails */}
+          {execSummary.emailThreads.length > 0 && <div className={`border-t pt-3 ${darkMode ? "border-slate-700" : "border-gray-100"}`}>
+            <h4 className={`text-xs font-semibold mb-1.5 ${darkMode ? "text-amber-400" : "text-amber-700"}`}>Recent Email Threads</h4>
+            {execSummary.emailThreads.slice(0, 5).map((e, i) => (
+              <div key={i} className={`text-sm py-1.5 border-b last:border-0 ${darkMode ? "border-slate-700" : "border-gray-50"}`}>
+                <div className={`font-medium truncate ${darkMode ? "text-gray-200" : "text-gray-800"}`}>{e.subject}</div>
+                <div className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{e.from} {"\u00B7"} {e.date}</div>
+                {e.snippet && <div className={`text-xs mt-0.5 truncate ${darkMode ? "text-gray-500" : "text-gray-400"}`}>{e.snippet}</div>}
+              </div>
+            ))}
+          </div>}
+
+          {/* No data from any source */}
+          {execSummary.achievementsSinceLastCheckin.length === 0 && execSummary.currentPriorities.length === 0 &&
+           execSummary.outstandingItems.length === 0 && execSummary.slackMessages.length === 0 &&
+           execSummary.emailThreads.length === 0 && (
+            <p className={`text-sm ${darkMode ? "text-gray-400" : "text-gray-500"}`}>No activity found. Ensure Wealthbox ID or Slack Channel ID is configured in client settings.</p>
+          )}
+
+          <div className={`text-[10px] mt-2 ${darkMode ? "text-gray-500" : "text-gray-400"}`}>
+            Generated: {new Date(execSummary.generatedAt).toLocaleString()}
+            {execSummary.lastCheckinDate && <> {"\u00B7"} Last check-in: {new Date(execSummary.lastCheckinDate).toLocaleDateString()}</>}
+            {client.slackChannelId && <> {"\u00B7"} Slack: connected</>}
+          </div>
         </div>
       ) : (
         <div>
           {execLoading ? <p className={`text-sm ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Loading exec summary...</p> :
-            execError ? <p className="text-sm text-red-500">{execError}</p> :
-            <button onClick={handleLoadExecSummary} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700">Load Summary</button>}
+            execError ? <div><p className="text-sm text-red-500 mb-2">{execError}</p><button onClick={handleLoadExecSummary} className="text-xs text-blue-600 hover:text-blue-800">Retry</button></div> :
+            <div>
+              <button onClick={handleLoadExecSummary} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700">Load Summary</button>
+              <p className={`text-xs mt-2 ${darkMode ? "text-gray-500" : "text-gray-400"}`}>
+                Pulls from {client.wealthboxId ? "Wealthbox tasks" : ""}{client.wealthboxId && client.slackChannelId ? ", " : ""}{client.slackChannelId ? "Slack channel" : ""}{(client.wealthboxId || client.slackChannelId) ? " and " : ""}Gmail threads
+              </p>
+            </div>}
         </div>
       )}
     </div>
@@ -1438,6 +1485,7 @@ function ClientForm({ client, onSave, onCancel, referralSources, darkMode }: { c
   const [wbId, setWbId] = useState(client?.wealthboxId ?? "");
   const [pod, setPod] = useState(client?.pod ?? "");
   const [wpa, setWpa] = useState(client?.wpa ?? "");
+  const [slackCh, setSlackCh] = useState(client?.slackChannelId ?? "");
 
   return <div className="space-y-5">
     <button onClick={onCancel} className="text-sm text-blue-600 hover:text-blue-800">{"\u2190"} Back</button>
@@ -1461,10 +1509,13 @@ function ClientForm({ client, onSave, onCancel, referralSources, darkMode }: { c
           <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Pod</label><select className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={pod} onChange={e => setPod(e.target.value)}><option value="">Auto (by advisor)</option>{DEFAULT_PODS.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
           <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>WPA / Wealth Planner</label><input className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200 placeholder-gray-500" : "border-gray-200 bg-white"}`} value={wpa} onChange={e => setWpa(e.target.value)} placeholder="e.g. Thea" /></div>
         </div>
-        <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Wealthbox Contact ID</label><input className={`w-full border rounded-lg px-3 py-2 text-sm font-mono ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200 placeholder-gray-500" : "border-gray-200 bg-white"}`} value={wbId} onChange={e => setWbId(e.target.value)} placeholder="Paste Wealthbox contact ID to enable exec summary" /></div>
+        <div className="grid grid-cols-2 gap-3">
+          <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Wealthbox Contact ID</label><input className={`w-full border rounded-lg px-3 py-2 text-sm font-mono ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200 placeholder-gray-500" : "border-gray-200 bg-white"}`} value={wbId} onChange={e => setWbId(e.target.value)} placeholder="Wealthbox contact ID" /></div>
+          <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Slack Channel ID</label><input className={`w-full border rounded-lg px-3 py-2 text-sm font-mono ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200 placeholder-gray-500" : "border-gray-200 bg-white"}`} value={slackCh} onChange={e => setSlackCh(e.target.value)} placeholder="e.g. C0ABCDEF123" /></div>
+        </div>
       </div>
       <div className="flex gap-2 mt-4">
-        <button onClick={() => onSave({ id: client?.id || ("c" + Date.now()), name, tier, leadAdvisor: adv, onboardDate: date, monthlyFee: mFee, referralSource: refSrc, referredBy: refBy, wealthboxId: wbId || undefined, pod: pod || undefined, wpa: wpa || undefined })} disabled={!name.trim()} className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40">Save</button>
+        <button onClick={() => onSave({ id: client?.id || ("c" + Date.now()), name, tier, leadAdvisor: adv, onboardDate: date, monthlyFee: mFee, referralSource: refSrc, referredBy: refBy, wealthboxId: wbId || undefined, pod: pod || undefined, wpa: wpa || undefined, slackChannelId: slackCh || undefined })} disabled={!name.trim()} className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40">Save</button>
         <button onClick={onCancel} className={`border px-4 py-2 rounded-lg text-sm ${darkMode ? "border-slate-600 text-gray-300 hover:bg-slate-700" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>Cancel</button>
       </div>
     </div>

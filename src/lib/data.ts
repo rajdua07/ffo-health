@@ -33,6 +33,8 @@ export interface Client {
   birthDate?: string;
   completedTasks?: Array<{ name: string; completedAt: string; description?: string }>;
   baselineCompletedAt?: string; // timestamp when baseline scoring was completed
+  slackChannelId?: string;      // Slack channel ID for client comms (e.g. C0ABCDEF123)
+  gmailQuery?: string;          // Gmail search query override (default: client name)
 }
 
 export interface Score {
@@ -129,6 +131,8 @@ export interface ExecSummary {
   achievementsSinceLastCheckin: Array<{ name: string; completedAt: string; description?: string }>;
   currentPriorities: Array<{ name: string; dueDate?: string; description?: string }>;
   outstandingItems: Array<{ name: string; dueDate?: string; description?: string }>;
+  slackMessages: Array<{ author: string; text: string; ts: string }>;
+  emailThreads: Array<{ subject: string; from: string; snippet: string; date: string }>;
   lastCheckinDate: string | null;
   generatedAt: string;
 }
@@ -518,11 +522,17 @@ export async function enrichClientsWithTasks(clients: Client[]): Promise<Client[
   }
 }
 
-export async function fetchExecSummary(clientId: string, wealthboxId: string, lastScoredTs: string | null): Promise<ExecSummary> {
+export async function fetchExecSummary(
+  clientId: string, wealthboxId: string | undefined, lastScoredTs: string | null,
+  slackChannelId?: string, clientName?: string, gmailQuery?: string,
+): Promise<ExecSummary> {
   if (typeof window === "undefined") throw new Error('Not in browser');
-  const response = await fetch('/api/wealthbox/exec-summary', {
+  const response = await fetch('/api/integrations/exec-summary', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ clientId, wealthboxId, lastCheckinDate: lastScoredTs })
+    body: JSON.stringify({
+      clientId, wealthboxId, lastCheckinDate: lastScoredTs,
+      slackChannelId, clientName, gmailQuery,
+    })
   });
   const data = await response.json();
   if (data.success) return data.summary;
