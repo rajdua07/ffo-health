@@ -5,34 +5,73 @@ import { getCompletedTasksForContact, getOpenTasksForContact, getEventsForContac
 // === Slack ===
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN;
 
+const slackHeaders = () => ({ 'Authorization': `Bearer ${SLACK_BOT_TOKEN}`, 'Content-Type': 'application/json' });
+const slackUserCache: Record<string, string> = {};
+
+async function resolveSlackUser(uid: string): Promise<string> {
+  if (slackUserCache[uid]) return slackUserCache[uid];
+  try {
+    const resp = await fetch(`https://slack.com/api/users.info?user=${uid}`, { headers: slackHeaders() });
+    const data = await resp.json();
+    const name = data.ok ? (data.user?.real_name || data.user?.name || uid) : uid;
+    slackUserCache[uid] = name;
+    return name;
+  } catch { slackUserCache[uid] = uid; return uid; }
+}
+
 async function getSlackChannelMessages(channelId: string, sinceTs: number): Promise<Array<{ author: string; text: string; ts: string }>> {
   if (!SLACK_BOT_TOKEN || !channelId) return [];
   try {
     const oldest = Math.floor(sinceTs / 1000).toString();
-    const response = await fetch(`https://slack.com/api/conversations.history?channel=${channelId}&oldest=${oldest}&limit=30`, {
-      headers: { 'Authorization': `Bearer ${SLACK_BOT_TOKEN}`, 'Content-Type': 'application/json' },
-    });
-    const data = await response.json();
+
+    // Fetch top-level messages
+    const resp = await fetch(`https://slack.com/api/conversations.history?channel=${channelId}&oldest=${oldest}&limit=30`, { headers: slackHeaders() });
+    const data = await resp.json();
     if (!data.ok) return [];
-    const userIds = Array.from(new Set((data.messages || []).map((m: { user?: string }) => m.user).filter(Boolean)));
-    const userNames: Record<string, string> = {};
-    for (const uid of userIds as string[]) {
-      try {
-        const userResp = await fetch(`https://slack.com/api/users.info?user=${uid}`, {
-          headers: { 'Authorization': `Bearer ${SLACK_BOT_TOKEN}` },
-        });
-        const userData = await userResp.json();
-        if (userData.ok) userNames[uid] = userData.user?.real_name || userData.user?.name || uid;
-      } catch { userNames[uid as string] = uid as string; }
+
+    const allMessages: Array<{ user?: string; text?: string; ts?: string; thread_ts?: string; reply_count?: number }> = [];
+
+    // For each message, check if it has a thread and fetch replies
+    for (const msg of (data.messages || [])) {
+      allMessages.push(msg);
+
+      if (msg.reply_count && msg.reply_count > 0 && msg.thread_ts) {
+        try {
+          const threadResp = await fetch(
+            `https://slack.com/api/conversations.replies?channel=${channelId}&ts=${msg.thread_ts}&oldest=${oldest}&limit=20`,
+            { headers: slackHeaders() }
+          );
+          const threadData = await threadResp.json();
+          if (threadData.ok) {
+            // Skip the parent (first message) since we already have it
+            const replies = (threadData.messages || []).slice(1);
+            allMessages.push(...replies);
+          }
+        } catch { /* skip thread fetch errors */ }
+      }
     }
-    return (data.messages || [])
-      .filter((m: { subtype?: string }) => !m.subtype)
-      .map((m: { user?: string; text?: string; ts?: string }) => ({
-        author: userNames[m.user || ''] || m.user || 'Unknown',
+
+    // Resolve all unique user IDs
+    const userIds = Array.from(new Set(allMessages.map(m => m.user).filter(Boolean))) as string[];
+    await Promise.all(userIds.map(uid => resolveSlackUser(uid)));
+
+    // Deduplicate by ts, filter system messages, sort chronologically
+    const seen = new Set<string>();
+    return allMessages
+      .filter((m: any) => {
+        if (m.subtype) return false;
+        const key = m.ts || '';
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .sort((a, b) => Number(a.ts) - Number(b.ts))
+      .slice(-30)
+      .map(m => ({
+        author: slackUserCache[m.user || ''] || m.user || 'Unknown',
         text: (m.text || '').slice(0, 500),
         ts: new Date(Number(m.ts) * 1000).toISOString(),
-      }))
-      .reverse().slice(-20);
+      }));
   } catch { return []; }
 }
 
