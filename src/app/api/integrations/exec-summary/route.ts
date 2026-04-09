@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
-import { getCompletedTasksForContact, getOpenTasksForContact, getEventsForContact, getNotesForContact } from '@/lib/wealthbox';
+import { getCompletedTasksForContact, getOpenTasksForContact, getEventsForContact, getNotesForContact, loadWealthboxUsers, resolveUserName } from '@/lib/wealthbox';
 
 // === Slack ===
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN;
@@ -58,20 +58,23 @@ CLIENT: ${clientName}
 LAST CHECK-IN: ${lastCheckinDate ? new Date(lastCheckinDate).toLocaleDateString() : 'Unknown'}
 TODAY: ${new Date().toLocaleDateString()}
 
---- COMPLETED TASKS (since last check-in) ---
-${completedTasks.length === 0 ? 'None' : completedTasks.map(t => `- ${t.name} (completed ${new Date(t.completedAt).toLocaleDateString()})${t.description ? ': ' + t.description : ''}`).join('\n')}
+--- RECENTLY COMPLETED TASKS (${completedTasks.length}) ---
+${completedTasks.length === 0 ? 'None' : completedTasks.map((t: any) => `- ${t.name} — completed by ${t.completedBy || 'team'} on ${new Date(t.completedAt).toLocaleDateString()}${t.description ? '\n  Context: ' + t.description.slice(0, 200) : ''}`).join('\n')}
 
---- OPEN TASKS / CURRENT PRIORITIES ---
-${currentPriorities.length === 0 ? 'None' : currentPriorities.map(t => `- ${t.name}${t.dueDate ? ' (due ' + new Date(t.dueDate).toLocaleDateString() + ')' : ''}${t.description ? ': ' + t.description : ''}`).join('\n')}
+--- OPEN TASKS / CURRENT PRIORITIES (${currentPriorities.length}) ---
+${currentPriorities.length === 0 ? 'None' : currentPriorities.map((t: any) => `- ${t.name} — assigned to ${t.assignedTo || 'unassigned'}${t.dueDate ? ', due ' + new Date(t.dueDate).toLocaleDateString() : ''}${t.description ? '\n  Context: ' + t.description.slice(0, 200) : ''}`).join('\n')}
 
---- OVERDUE ITEMS ---
-${outstandingItems.length === 0 ? 'None' : outstandingItems.map(t => `- ${t.name} (was due ${new Date(t.dueDate!).toLocaleDateString()})${t.description ? ': ' + t.description : ''}`).join('\n')}
+--- OVERDUE ITEMS (${outstandingItems.length}) ---
+${outstandingItems.length === 0 ? 'None' : outstandingItems.map((t: any) => `- ${t.name} — assigned to ${t.assignedTo || 'unassigned'}, was due ${new Date(t.dueDate!).toLocaleDateString()}${t.description ? '\n  Context: ' + t.description.slice(0, 200) : ''}`).join('\n')}
 
---- RECENT COMMUNICATION (emails, calls, notes from CRM) ---
-${emailThreads.length === 0 ? 'None' : emailThreads.map(e => `- [${e.subject}] from ${e.from} on ${new Date(e.date).toLocaleDateString()}: ${e.snippet}`).join('\n')}
+--- MEETINGS & EVENTS (${emailThreads.filter(e => e.subject !== 'Note').length}) ---
+${emailThreads.filter(e => e.subject !== 'Note').length === 0 ? 'None' : emailThreads.filter(e => e.subject !== 'Note').map(e => `- ${e.subject} (${new Date(e.date).toLocaleDateString()})${e.snippet ? ': ' + e.snippet.slice(0, 150) : ''}`).join('\n')}
 
---- SLACK CHANNEL ACTIVITY ---
-${slackMessages.length === 0 ? 'None' : slackMessages.map(m => `- ${m.author} (${new Date(m.ts).toLocaleDateString()}): ${m.text}`).join('\n')}
+--- CRM NOTES (${emailThreads.filter(e => e.subject === 'Note').length}) ---
+${emailThreads.filter(e => e.subject === 'Note').length === 0 ? 'None' : emailThreads.filter(e => e.subject === 'Note').map(e => `- ${new Date(e.date).toLocaleDateString()}: ${e.snippet.slice(0, 200)}`).join('\n')}
+
+--- SLACK CHANNEL ACTIVITY (${slackMessages.length}) ---
+${slackMessages.length === 0 ? 'No Slack channel connected' : slackMessages.map(m => `- ${m.author} (${new Date(m.ts).toLocaleDateString()}): ${m.text}`).join('\n')}
 `.trim();
 
   const message = await anthropic.messages.create({
@@ -123,10 +126,10 @@ export async function POST(request: Request) {
 
     const sinceDate = lastCheckinDate ? new Date(lastCheckinDate) : new Date(Date.now() - 90 * 86400000);
     const sinceTs = sinceDate.getTime();
-    const sinceISO = sinceDate.toISOString().split('T')[0];
 
-    // Fetch all sources in parallel
-    const [completedTasks, openTasks, events, notes, slackMessages] = await Promise.all([
+    // Load user names + fetch all sources in parallel
+    const [, completedTasksRaw, openTasksRaw, events, notes, slackMessages] = await Promise.all([
+      wealthboxId ? loadWealthboxUsers() : Promise.resolve({}),
       wealthboxId ? getCompletedTasksForContact(wealthboxId) : Promise.resolve([]),
       wealthboxId ? getOpenTasksForContact(wealthboxId) : Promise.resolve([]),
       wealthboxId ? getEventsForContact(wealthboxId) : Promise.resolve([]),
@@ -134,31 +137,46 @@ export async function POST(request: Request) {
       getSlackChannelMessages(slackChannelId || '', sinceTs),
     ]);
 
-    // Process completed tasks → achievements
-    const achievementsSinceLastCheckin = completedTasks
-      .filter(t => t.completed_at && new Date(t.completed_at) >= sinceDate)
-      .sort((a, b) => new Date(b.completed_at!).getTime() - new Date(a.completed_at!).getTime())
-      .slice(0, 20)
-      .map(t => ({ name: t.name, completedAt: t.completed_at!, description: t.description }));
+    // Process completed tasks → achievements (with who completed them)
+    const achievementsSinceLastCheckin = completedTasksRaw
+      .filter((t: any) => t.completed_at && new Date(t.completed_at) >= sinceDate)
+      .sort((a: any, b: any) => new Date(b.completed_at).getTime() - new Date(a.completed_at).getTime())
+      .slice(0, 25)
+      .map((t: any) => ({
+        name: t.name,
+        completedAt: t.completed_at!,
+        description: t.description,
+        completedBy: resolveUserName(t.completer),
+        assignedTo: resolveUserName(t.assigned_to),
+      }));
 
-    // Process open tasks → priorities vs outstanding
+    // Process open tasks → priorities vs outstanding (with assignments)
     const now = new Date();
-    const currentPriorities = openTasks
-      .filter(t => !t.due_date || new Date(t.due_date) >= now)
-      .sort((a, b) => {
+    const currentPriorities = openTasksRaw
+      .filter((t: any) => !t.due_date || new Date(t.due_date) >= now)
+      .sort((a: any, b: any) => {
         if (!a.due_date) return 1; if (!b.due_date) return -1;
         return new Date(a.due_date).getTime() - new Date(b.due_date).getTime();
       })
-      .slice(0, 15)
-      .map(t => ({ name: t.name, dueDate: t.due_date, description: t.description }));
+      .slice(0, 20)
+      .map((t: any) => ({
+        name: t.name,
+        dueDate: t.due_date,
+        description: t.description,
+        assignedTo: resolveUserName(t.assigned_to),
+      }));
 
-    const outstandingItems = openTasks
-      .filter(t => t.due_date && new Date(t.due_date) < now)
-      .sort((a, b) => new Date(a.due_date!).getTime() - new Date(b.due_date!).getTime())
-      .map(t => ({ name: t.name, dueDate: t.due_date, description: t.description }));
+    const outstandingItems = openTasksRaw
+      .filter((t: any) => t.due_date && new Date(t.due_date) < now)
+      .sort((a: any, b: any) => new Date(a.due_date).getTime() - new Date(b.due_date).getTime())
+      .map((t: any) => ({
+        name: t.name,
+        dueDate: t.due_date,
+        description: t.description,
+        assignedTo: resolveUserName(t.assigned_to),
+      }));
 
-    // Process Wealthbox events → meetings, calls, check-ins
-    // Process Wealthbox notes (status_updates) → communication history
+    // Process Wealthbox events + notes → communication history
     const emailThreads = [
       ...events.map(e => ({
         subject: e.title || 'Meeting',
@@ -171,10 +189,10 @@ export async function POST(request: Request) {
         .map(n => ({
           subject: 'Note',
           from: 'Team',
-          snippet: n.content.slice(0, 200),
+          snippet: n.content.slice(0, 300),
           date: n.created_at,
         })),
-    ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 15);
+    ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 20);
 
     // Generate AI narrative summary
     const narrative = await generateNarrative(

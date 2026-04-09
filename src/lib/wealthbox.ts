@@ -138,6 +138,30 @@ export async function getWealthboxContact(id: string): Promise<WealthboxContact 
   }
 }
 
+// Cache for user ID → name resolution
+let userCache: Record<string, string> = {};
+let userCacheLoaded = false;
+
+export async function loadWealthboxUsers(): Promise<Record<string, string>> {
+  if (userCacheLoaded) return userCache;
+  try {
+    const data = await wealthboxFetch('/users?per_page=100');
+    for (const u of data.users || []) {
+      const name = [u.first_name, u.last_name].filter(Boolean).join(' ').replace(/,.*$/, '').trim();
+      if (name) userCache[String(u.id)] = name;
+    }
+    userCacheLoaded = true;
+  } catch { /* ignore */ }
+  return userCache;
+}
+
+export function resolveUserName(idOrObj: any): string {
+  if (!idOrObj) return 'Team';
+  if (typeof idOrObj === 'object' && idOrObj.name) return idOrObj.name;
+  const id = String(typeof idOrObj === 'object' ? idOrObj.id : idOrObj);
+  return userCache[id] || 'Team';
+}
+
 export async function getCompletedTasksForContact(contactId: string): Promise<WealthboxTask[]> {
   try {
     // Use linked_to for reliable contact association
