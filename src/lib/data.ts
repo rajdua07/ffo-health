@@ -13,8 +13,11 @@ export const NPS_SOURCES = ["Survey", "Call Notes"] as const;
 export interface Pod {
   id: string;
   name: string;
-  advisors: string[];  // advisor names
-  wpa?: string;        // wealth planner assistant name
+  advisor: string;     // lead advisor (mandatory)
+  wp: string;          // wealth planner (mandatory)
+  wpa: string;         // wealth planner assistant (mandatory)
+  partner?: string;    // partner (optional)
+  advisors?: string[]; // legacy — kept for migration
 }
 
 export interface Client {
@@ -265,7 +268,7 @@ export function getPods(settings?: Settings): Pod[] {
 export function getPodForClient(client: Client, settings?: Settings): Pod | null {
   const pods = getPods(settings);
   if (client.pod) return pods.find(p => p.id === client.pod) || null;
-  return pods.find(p => p.advisors.includes(client.leadAdvisor)) || null;
+  return pods.find(p => p.advisor === client.leadAdvisor || p.advisors?.includes(client.leadAdvisor)) || null;
 }
 
 // === PERMISSIONS ===
@@ -332,8 +335,8 @@ export function parseCSVClients(csvText: string): Client[] {
 
 // === DEFAULT DATA ===
 export const DEFAULT_PODS: Pod[] = [
-  { id: "pod1", name: "Pod Alpha", advisors: ["Landon"], wpa: "Thea" },
-  { id: "pod2", name: "Pod Beta", advisors: ["Coty"], wpa: "Vinny" },
+  { id: "pod1", name: "Pod Alpha", advisor: "Landon", wp: "Landon", wpa: "Thea" },
+  { id: "pod2", name: "Pod Beta", advisor: "Coty", wp: "Coty", wpa: "Vinny" },
 ];
 
 export const DEFAULT_USERS: UserProfile[] = [
@@ -426,7 +429,7 @@ export async function loadData(): Promise<AppData> {
       if (parsed.clients) {
         parsed.clients = parsed.clients.map((c: Client) => {
           if (!c.pod) {
-            const pod = DEFAULT_PODS.find(p => p.advisors.includes(c.leadAdvisor));
+            const pod = DEFAULT_PODS.find(p => p.advisor === c.leadAdvisor || p.advisors?.includes(c.leadAdvisor));
             return { ...c, pod: pod?.id || "" };
           }
           return c;

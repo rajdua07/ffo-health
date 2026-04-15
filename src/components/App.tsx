@@ -451,35 +451,42 @@ function PodsTab({ stats, onSelect, darkMode, settings, onSaveSettings }: { stat
 
   // Pod form state
   const [podName, setPodName] = useState("");
-  const [podAdvisors, setPodAdvisors] = useState("");
+  const [podAdvisor, setPodAdvisor] = useState("");
+  const [podWp, setPodWp] = useState("");
   const [podWpa, setPodWpa] = useState("");
+  const [podPartner, setPodPartner] = useState("");
 
   const openEditPod = (pod: Pod) => {
     setEditingPod(pod);
     setPodName(pod.name);
-    setPodAdvisors(pod.advisors.join(", "));
+    setPodAdvisor(pod.advisor || pod.advisors?.[0] || "");
+    setPodWp(pod.wp || "");
     setPodWpa(pod.wpa || "");
+    setPodPartner(pod.partner || "");
     setShowPodForm(true);
   };
 
   const openAddPod = () => {
     setEditingPod(null);
     setPodName("");
-    setPodAdvisors("");
+    setPodAdvisor("");
+    setPodWp("");
     setPodWpa("");
+    setPodPartner("");
     setShowPodForm(true);
   };
 
   const savePod = () => {
-    if (!podName.trim() || !onSaveSettings) return;
-    const advisorList = podAdvisors.split(",").map(a => a.trim()).filter(Boolean);
+    if (!podName.trim() || !podAdvisor.trim() || !podWp.trim() || !podWpa.trim() || !onSaveSettings) return;
     const currentPods = [...(settings?.pods || DEFAULT_PODS)];
+
+    const podObj: Pod = { id: editingPod?.id || ("pod" + Date.now()), name: podName.trim(), advisor: podAdvisor.trim(), wp: podWp.trim(), wpa: podWpa.trim(), partner: podPartner.trim() || undefined };
 
     if (editingPod) {
       const idx = currentPods.findIndex(p => p.id === editingPod.id);
-      if (idx >= 0) currentPods[idx] = { ...currentPods[idx], name: podName.trim(), advisors: advisorList, wpa: podWpa.trim() || undefined };
+      if (idx >= 0) currentPods[idx] = podObj;
     } else {
-      currentPods.push({ id: "pod" + Date.now(), name: podName.trim(), advisors: advisorList, wpa: podWpa.trim() || undefined });
+      currentPods.push(podObj);
     }
 
     onSaveSettings({ ...settings, referralSources: settings?.referralSources || REFERRAL_SOURCES, pods: currentPods });
@@ -515,12 +522,18 @@ function PodsTab({ stats, onSelect, darkMode, settings, onSaveSettings }: { stat
       <div className={`rounded-xl border p-4 sm:p-5 max-w-md ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
         <h2 className={`text-lg font-bold mb-4 ${darkMode ? "text-gray-100" : "text-gray-900"}`}>{editingPod ? "Edit Pod" : "Create Pod"}</h2>
         <div className="space-y-3">
-          <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Pod Name</label><input className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={podName} onChange={e => setPodName(e.target.value)} placeholder="e.g. Pod Alpha" /></div>
-          <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Advisors (comma-separated)</label><input className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={podAdvisors} onChange={e => setPodAdvisors(e.target.value)} placeholder="e.g. Landon, Coty" /></div>
-          <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>WPA (optional)</label><input className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={podWpa} onChange={e => setPodWpa(e.target.value)} placeholder="e.g. Thea" /></div>
+          <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Pod Name *</label><input className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={podName} onChange={e => setPodName(e.target.value)} placeholder="e.g. Pod Alpha" /></div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Advisor *</label><input className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={podAdvisor} onChange={e => setPodAdvisor(e.target.value)} placeholder="e.g. Landon" /></div>
+            <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>WP (Wealth Planner) *</label><input className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={podWp} onChange={e => setPodWp(e.target.value)} placeholder="e.g. Josh" /></div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>WPA (Wealth Planner Assistant) *</label><input className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={podWpa} onChange={e => setPodWpa(e.target.value)} placeholder="e.g. Thea" /></div>
+            <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Partner (optional)</label><input className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={podPartner} onChange={e => setPodPartner(e.target.value)} placeholder="e.g. Sarah" /></div>
+          </div>
         </div>
         <div className="flex gap-2 mt-4">
-          <button onClick={savePod} disabled={!podName.trim()} className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40">Save Pod</button>
+          <button onClick={savePod} disabled={!podName.trim() || !podAdvisor.trim() || !podWp.trim() || !podWpa.trim()} className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40">Save Pod</button>
           <button onClick={() => setShowPodForm(false)} className={`border px-4 py-2 rounded-lg text-sm ${darkMode ? "border-slate-600 text-gray-300 hover:bg-slate-700" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>Cancel</button>
         </div>
       </div>
@@ -552,7 +565,7 @@ function PodsTab({ stats, onSelect, darkMode, settings, onSaveSettings }: { stat
             <div>
               <h3 className={`text-lg font-bold ${darkMode ? "text-gray-100" : "text-gray-900"}`}>{pd.pod.name}</h3>
               <div className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>
-                Advisors: {pd.pod.advisors.join(", ")}{pd.pod.wpa ? ` | WPA: ${pd.pod.wpa}` : ""}
+                Advisor: {pd.pod.advisor || pd.pod.advisors?.join(", ")} | WP: {pd.pod.wp || "—"} | WPA: {pd.pod.wpa || "—"}{pd.pod.partner ? ` | Partner: ${pd.pod.partner}` : ""}
               </div>
             </div>
             <div className="flex items-center gap-2">
