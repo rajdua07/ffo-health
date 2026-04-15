@@ -1620,7 +1620,7 @@ function ClientDetail({ client, scores, wows, referrals, onBack, onScore, onAddW
 }
 
 // ===== SCORING FORM =====
-function ScoringForm({ client, existingScore, onSave, onCancel, darkMode, settings }: { client: Client; existingScore?: Score; onSave: (s: Score) => void; onCancel: () => void; darkMode?: boolean; settings?: Settings }) {
+function ScoringForm({ client, existingScore, onSave, onCancel, darkMode, settings, wows }: { client: Client; existingScore?: Score; onSave: (s: Score) => void; onCancel: () => void; darkMode?: boolean; settings?: Settings; wows?: Wow[] }) {
   const now = new Date();
   const [month, setMonth] = useState(existingScore?.month ?? now.getMonth());
   const [year, setYear] = useState(existingScore?.year ?? now.getFullYear());
@@ -1637,7 +1637,8 @@ function ScoringForm({ client, existingScore, onSave, onCancel, darkMode, settin
   const handleAIScore = async () => {
     setAiLoading(true); setAiError("");
     try {
-      const result = await fetchAIScore(client.name, client.wealthboxId, client.slackChannelId, client.googleDriveFolderId);
+      const clientWows = (wows || []).filter(w => w.clientId === client.id);
+      const result = await fetchAIScore(client.name, client.wealthboxId, client.slackChannelId, client.googleDriveFolderId, clientWows);
       setScoreVals(result.scores);
       setNotes(result.observations);
       setActions(result.actionItems);
@@ -2023,7 +2024,7 @@ export default function App() {
       </>}
 
       {view === "detail" && selectedStat && <ClientDetail client={selectedStat} scores={data.scores || []} wows={data.wows || []} referrals={data.referrals || []} onBack={back} onScore={() => setView("score")} onAddWow={() => setView("addWow")} onEditClient={() => setView("editClient")} onExportPDF={handleExportClientPDF} user={currentUser} darkMode={darkMode} settings={data.settings} />}
-      {view === "score" && selected && <ScoringForm client={selected} existingScore={(data.scores || []).find(s => s.clientId === selectedId && s.year === new Date().getFullYear() && s.month === new Date().getMonth())} onSave={handleSaveScore} onCancel={() => { setBaselineAutoAdvance(false); if (selectedId) setView("detail"); else { setView("dashboard"); setTab("baseline"); } }} darkMode={darkMode} settings={data.settings} />}
+      {view === "score" && selected && <ScoringForm client={selected} existingScore={(data.scores || []).find(s => s.clientId === selectedId && s.year === new Date().getFullYear() && s.month === new Date().getMonth())} onSave={handleSaveScore} onCancel={() => { setBaselineAutoAdvance(false); if (selectedId) setView("detail"); else { setView("dashboard"); setTab("baseline"); } }} darkMode={darkMode} settings={data.settings} wows={data.wows || []} />}
       {view === "addClient" && <ClientForm onSave={handleSaveClient} onCancel={back} referralSources={getReferralSources(data.settings)} darkMode={darkMode} settings={data.settings} />}
       {view === "editClient" && selected && <ClientForm client={selected} onSave={handleSaveClient} onCancel={() => setView("detail")} referralSources={getReferralSources(data.settings)} darkMode={darkMode} settings={data.settings} />}
       {view === "addWow" && selected && <WowForm clientId={selectedId!} onSave={handleSaveWow} onCancel={() => setView("detail")} darkMode={darkMode} />}

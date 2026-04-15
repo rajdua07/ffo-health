@@ -119,7 +119,7 @@ async function getGoogleDriveTranscripts(folderId: string): Promise<Array<{ name
 
 export async function POST(request: Request) {
   try {
-    const { clientName, wealthboxId, slackChannelId, googleDriveFolderId } = await request.json();
+    const { clientName, wealthboxId, slackChannelId, googleDriveFolderId, wows } = await request.json();
 
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
@@ -161,6 +161,10 @@ export async function POST(request: Request) {
       `--- ${t.name} (${new Date(t.date).toLocaleDateString()}) ---\n${t.content}`
     ).join('\n\n') || 'No call transcripts available';
 
+    const wowList = (wows || []).map((w: any) =>
+      `- ${w.date}: ${w.description} (Type: ${w.type}, Owner: ${w.owner})${w.reaction ? ' — Client reaction: ' + w.reaction : ''}`
+    ).join('\n') || 'None';
+
     const scoringCriteria = loadScoringCriteria();
 
     const anthropic = new Anthropic({ apiKey });
@@ -194,6 +198,9 @@ ${slackList}
 
 ### Recent Call Transcripts (${transcripts.length})
 ${transcriptList}
+
+### Wow Moments (${(wows || []).length})
+${wowList}
 
 ## Instructions
 
