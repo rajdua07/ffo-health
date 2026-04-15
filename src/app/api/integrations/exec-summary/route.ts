@@ -19,26 +19,47 @@ async function resolveSlackUser(uid: string): Promise<string> {
   } catch { slackUserCache[uid] = uid; return uid; }
 }
 
-async function getSlackChannelMessages(channelId: string, sinceTs: number): Promise<Array<{ author: string; text: string; ts: string }>> {
+async function getSlackChannelMessages(channelId: string, _sinceTs?: number): Promise<Array<{ author: string; text: string; ts: string }>> {
   if (!SLACK_BOT_TOKEN || !channelId) return [];
   try {
-    const oldest = Math.floor(sinceTs / 1000).toString();
+    // Always cap at 1 month ago from now, regardless of lastCheckinDate
+    const oneMonthAgo = Math.floor((Date.now() - 30 * 86400000) / 1000).toString();
 
-    // Fetch top-level messages
-    const resp = await fetch(`https://slack.com/api/conversations.history?channel=${channelId}&oldest=${oldest}&limit=30`, { headers: slackHeaders() });
-    const data = await resp.json();
-    if (!data.ok) return [];
+    // Fetch up to 100 top-level messages from the last month
+    const allTopLevel: Array<any> = [];
+    let cursor: string | undefined;
+    let fetched = 0;
+    const TARGET = 100;
+
+    while (fetched < TARGET) {
+      const url = new URL('https://slack.com/api/conversations.history');
+      url.searchParams.set('channel', channelId);
+      url.searchParams.set('oldest', oneMonthAgo);
+      url.searchParams.set('limit', String(Math.min(TARGET - fetched, 100)));
+      if (cursor) url.searchParams.set('cursor', cursor);
+
+      const resp = await fetch(url.toString(), { headers: slackHeaders() });
+      const data = await resp.json();
+      if (!data.ok) break;
+
+      const msgs = data.messages || [];
+      allTopLevel.push(...msgs);
+      fetched += msgs.length;
+
+      cursor = data.response_metadata?.next_cursor;
+      if (!cursor || msgs.length === 0) break;
+    }
 
     const allMessages: Array<{ user?: string; text?: string; ts?: string; thread_ts?: string; reply_count?: number }> = [];
 
     // For each message, check if it has a thread and fetch replies
-    for (const msg of (data.messages || [])) {
+    for (const msg of allTopLevel) {
       allMessages.push(msg);
 
       if (msg.reply_count && msg.reply_count > 0 && msg.thread_ts) {
         try {
           const threadResp = await fetch(
-            `https://slack.com/api/conversations.replies?channel=${channelId}&ts=${msg.thread_ts}&oldest=${oldest}&limit=20`,
+            `https://slack.com/api/conversations.replies?channel=${channelId}&ts=${msg.thread_ts}&oldest=${oneMonthAgo}&limit=50`,
             { headers: slackHeaders() }
           );
           const threadData = await threadResp.json();
@@ -66,7 +87,6 @@ async function getSlackChannelMessages(channelId: string, sinceTs: number): Prom
         return true;
       })
       .sort((a, b) => Number(a.ts) - Number(b.ts))
-      .slice(-30)
       .map(m => ({
         author: slackUserCache[m.user || ''] || m.user || 'Unknown',
         text: (m.text || '').slice(0, 500),
@@ -118,7 +138,7 @@ ${slackMessages.length === 0 ? 'No Slack channel connected' : slackMessages.map(
 
   const message = await anthropic.messages.create({
     model: 'claude-sonnet-4-20250514',
-    max_tokens: 800,
+    max_tokens: 1200,
     messages: [{
       role: 'user',
       content: `You are an executive assistant to a lead financial advisor at a fractional family office. Based on the following client data, write a concise executive briefing for the advisor before their next check-in with this client.
@@ -126,11 +146,12 @@ ${slackMessages.length === 0 ? 'No Slack channel connected' : slackMessages.map(
 The briefing should:
 1. Start with a 1-2 sentence overall status ("where the client is at")
 2. Highlight what's been accomplished since the last check-in
-3. Call out what balls are in whose court — what the team owes the client, and what the client owes the team
-4. Flag any overdue items or risks
-5. Suggest 1-2 talking points for the next meeting
+3. List EVERY open task and overdue item by name — specify who it's assigned to and when it's due. This is critical: do not summarize or skip any open/overdue tasks.
+4. Call out what balls are in whose court — what the team owes the client, and what the client owes the team
+5. Flag any overdue items or risks with urgency
+6. Suggest 1-2 talking points for the next meeting
 
-Keep it under 250 words. Use plain language, no jargon. Be direct and actionable. Use bullet points for clarity. Do not use markdown headers.
+Keep it under 350 words. Use plain language, no jargon. Be direct and actionable. Use bullet points for clarity. Do not use markdown headers.
 
 ${context}`
     }],

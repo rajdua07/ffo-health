@@ -34,6 +34,7 @@ export interface Client {
   completedTasks?: Array<{ name: string; completedAt: string; description?: string }>;
   baselineCompletedAt?: string; // timestamp when baseline scoring was completed
   slackChannelId?: string;      // Slack channel ID for client comms (e.g. C0ABCDEF123)
+  googleDriveFolderId?: string;  // Google Drive folder ID for client docs/transcripts
 }
 
 export interface Score {
@@ -520,6 +521,29 @@ export async function enrichClientsWithTasks(clients: Client[]): Promise<Client[
     console.error('Failed to enrich clients with tasks:', error);
     return clients;
   }
+}
+
+export async function fetchAIScore(
+  clientName: string, wealthboxId: string | undefined,
+  slackChannelId?: string, googleDriveFolderId?: string,
+): Promise<{ scores: number[]; observations: string; actionItems: string; dataSources: Record<string, number> }> {
+  if (typeof window === "undefined") throw new Error('Not in browser');
+  const response = await fetch('/api/integrations/ai-score', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ clientName, wealthboxId, slackChannelId, googleDriveFolderId }),
+  });
+  const data = await response.json();
+  if (data.success) return data;
+  throw new Error(data.error || 'Failed to generate AI score');
+}
+
+export function generateNPSSurveyLink(clientId: string, clientName: string): string {
+  const raw = `${clientId}:${encodeURIComponent(clientName)}:${Date.now()}`;
+  const token = typeof window !== 'undefined'
+    ? btoa(raw).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+    : '';
+  const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+  return `${baseUrl}/survey?t=${token}`;
 }
 
 export async function fetchExecSummary(

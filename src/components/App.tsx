@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, Fragment } from "react";
 import {
   AppData, Client, Score, Wow, Referral, ClientStat, UserProfile, Settings,
   NPSFeedback, Pod, ExecSummary, ScoringConfig,
@@ -7,7 +7,8 @@ import {
   getNextAnniversary, canScore, canEdit, canExport, canViewAllAdvisors, canConfigureScoring,
   filterByAdvisor, getReferralSources,
   syncFromWealthbox, pushScoreToWealthbox, testWealthboxConnection,
-  importNewClientsFromWealthbox, enrichClientsWithTasks, fetchExecSummary, parseCSVClients,
+  importNewClientsFromWealthbox, enrichClientsWithTasks, fetchExecSummary, fetchAIScore,
+  generateNPSSurveyLink, parseCSVClients,
   npsCategory, npsColor, latestNPSForClient, getPods, getPodForClient,
   getThresholds, getEffectiveWeights,
   METRICS, METRIC_COUNT, DIMENSIONS, DIM_WEIGHTS, MO, TIERS, ADVISORS, WOW_TYPES,
@@ -192,7 +193,7 @@ function ImportDialog({
 const TABS = [
   { id: "overview", label: "Overview" }, { id: "baseline", label: "Baseline" },
   { id: "ranking", label: "Ranking" },
-  { id: "advisors", label: "Advisors" }, { id: "pods", label: "Pods" },
+  { id: "advisors", label: "Advisors" }, { id: "pods", label: "Pods" }, { id: "team", label: "Team" },
   { id: "compliance", label: "Compliance" },
   { id: "alerts", label: "Alerts" }, { id: "revenue", label: "Revenue" },
   { id: "referrals", label: "Referrals" }, { id: "activity", label: "Activity" },
@@ -442,9 +443,55 @@ function AdvisorTab({ stats, darkMode, settings }: { stats: ClientStat[]; darkMo
 }
 
 // ===== PODS =====
-function PodsTab({ stats, onSelect, darkMode, settings }: { stats: ClientStat[]; onSelect: (id: string) => void; darkMode?: boolean; settings?: Settings }) {
+function PodsTab({ stats, onSelect, darkMode, settings, onSaveSettings }: { stats: ClientStat[]; onSelect: (id: string) => void; darkMode?: boolean; settings?: Settings; onSaveSettings?: (s: Settings) => void }) {
   const [expandedPod, setExpandedPod] = useState<string | null>(null);
+  const [editingPod, setEditingPod] = useState<Pod | null>(null);
+  const [showPodForm, setShowPodForm] = useState(false);
   const pods = getPods(settings);
+
+  // Pod form state
+  const [podName, setPodName] = useState("");
+  const [podAdvisors, setPodAdvisors] = useState("");
+  const [podWpa, setPodWpa] = useState("");
+
+  const openEditPod = (pod: Pod) => {
+    setEditingPod(pod);
+    setPodName(pod.name);
+    setPodAdvisors(pod.advisors.join(", "));
+    setPodWpa(pod.wpa || "");
+    setShowPodForm(true);
+  };
+
+  const openAddPod = () => {
+    setEditingPod(null);
+    setPodName("");
+    setPodAdvisors("");
+    setPodWpa("");
+    setShowPodForm(true);
+  };
+
+  const savePod = () => {
+    if (!podName.trim() || !onSaveSettings) return;
+    const advisorList = podAdvisors.split(",").map(a => a.trim()).filter(Boolean);
+    const currentPods = [...(settings?.pods || DEFAULT_PODS)];
+
+    if (editingPod) {
+      const idx = currentPods.findIndex(p => p.id === editingPod.id);
+      if (idx >= 0) currentPods[idx] = { ...currentPods[idx], name: podName.trim(), advisors: advisorList, wpa: podWpa.trim() || undefined };
+    } else {
+      currentPods.push({ id: "pod" + Date.now(), name: podName.trim(), advisors: advisorList, wpa: podWpa.trim() || undefined });
+    }
+
+    onSaveSettings({ ...settings, referralSources: settings?.referralSources || REFERRAL_SOURCES, pods: currentPods });
+    setShowPodForm(false);
+    setEditingPod(null);
+  };
+
+  const deletePod = (podId: string) => {
+    if (!onSaveSettings) return;
+    const currentPods = (settings?.pods || DEFAULT_PODS).filter(p => p.id !== podId);
+    onSaveSettings({ ...settings, referralSources: settings?.referralSources || REFERRAL_SOURCES, pods: currentPods });
+  };
 
   const podData = useMemo(() => pods.map(pod => {
     const podClients = stats.filter(c => {
@@ -462,12 +509,36 @@ function PodsTab({ stats, onSelect, darkMode, settings }: { stats: ClientStat[];
     return { pod, clients: podClients, scored: scored.length, avgScore, totalMRR, atRiskRev, hCount, wCount, rCount, overallHealth };
   }), [stats, pods, settings]);
 
+  if (showPodForm) {
+    return <div className="space-y-4">
+      <button onClick={() => setShowPodForm(false)} className="text-sm text-blue-600 hover:text-blue-800">{"\u2190"} Back to Pods</button>
+      <div className={`rounded-xl border p-4 sm:p-5 max-w-md ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
+        <h2 className={`text-lg font-bold mb-4 ${darkMode ? "text-gray-100" : "text-gray-900"}`}>{editingPod ? "Edit Pod" : "Create Pod"}</h2>
+        <div className="space-y-3">
+          <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Pod Name</label><input className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={podName} onChange={e => setPodName(e.target.value)} placeholder="e.g. Pod Alpha" /></div>
+          <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Advisors (comma-separated)</label><input className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={podAdvisors} onChange={e => setPodAdvisors(e.target.value)} placeholder="e.g. Landon, Coty" /></div>
+          <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>WPA (optional)</label><input className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={podWpa} onChange={e => setPodWpa(e.target.value)} placeholder="e.g. Thea" /></div>
+        </div>
+        <div className="flex gap-2 mt-4">
+          <button onClick={savePod} disabled={!podName.trim()} className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40">Save Pod</button>
+          <button onClick={() => setShowPodForm(false)} className={`border px-4 py-2 rounded-lg text-sm ${darkMode ? "border-slate-600 text-gray-300 hover:bg-slate-700" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>Cancel</button>
+        </div>
+      </div>
+    </div>;
+  }
+
   return <div className="space-y-4">
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      <StatCard label="Total Pods" value={pods.length} darkMode={darkMode} />
-      <StatCard label="Total MRR" value={fmtM(podData.reduce((s, p) => s + p.totalMRR, 0))} color="#1B2A4A" darkMode={darkMode} />
-      <StatCard label="Avg Score" value={(() => { const allScored = podData.filter(p => p.scored > 0); return allScored.length ? (allScored.reduce((s, p) => s + p.avgScore, 0) / allScored.length).toFixed(1) : "0.0"; })()} darkMode={darkMode} />
-      <StatCard label="Rev at Risk" value={fmtM(podData.reduce((s, p) => s + p.atRiskRev, 0))} color="#991b1b" darkMode={darkMode} />
+    <div className="flex items-center justify-between">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 flex-1">
+        <StatCard label="Total Pods" value={pods.length} darkMode={darkMode} />
+        <StatCard label="Total MRR" value={fmtM(podData.reduce((s, p) => s + p.totalMRR, 0))} color="#1B2A4A" darkMode={darkMode} />
+        <StatCard label="Avg Score" value={(() => { const allScored = podData.filter(p => p.scored > 0); return allScored.length ? (allScored.reduce((s, p) => s + p.avgScore, 0) / allScored.length).toFixed(1) : "0.0"; })()} darkMode={darkMode} />
+        <StatCard label="Rev at Risk" value={fmtM(podData.reduce((s, p) => s + p.atRiskRev, 0))} color="#991b1b" darkMode={darkMode} />
+      </div>
+    </div>
+
+    <div className="flex justify-end">
+      <button onClick={openAddPod} className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-blue-700">+ Add Pod</button>
     </div>
 
     <div className="grid gap-4 sm:grid-cols-2">
@@ -484,7 +555,10 @@ function PodsTab({ stats, onSelect, darkMode, settings }: { stats: ClientStat[];
                 Advisors: {pd.pod.advisors.join(", ")}{pd.pod.wpa ? ` | WPA: ${pd.pod.wpa}` : ""}
               </div>
             </div>
-            <ScoreCircle score={pd.scored > 0 ? pd.avgScore : null} size={48} settings={settings} />
+            <div className="flex items-center gap-2">
+              <button onClick={() => openEditPod(pd.pod)} className={`text-xs px-2 py-1 rounded ${darkMode ? "text-gray-400 hover:text-blue-400 hover:bg-slate-700" : "text-gray-400 hover:text-blue-600 hover:bg-gray-100"}`}>{"\u270E"}</button>
+              <ScoreCircle score={pd.scored > 0 ? pd.avgScore : null} size={48} settings={settings} />
+            </div>
           </div>
           <div className="grid grid-cols-3 gap-2 mb-3">
             <div className="text-center p-1.5 rounded-lg bg-green-50"><div className="text-lg font-bold text-green-800">{pd.hCount}</div><div className="text-[10px] text-green-600">Healthy</div></div>
@@ -496,9 +570,12 @@ function PodsTab({ stats, onSelect, darkMode, settings }: { stats: ClientStat[];
             <div className="flex justify-between text-sm"><span className={darkMode ? "text-gray-400" : "text-gray-500"}>Total MRR</span><span className={`font-semibold ${darkMode ? "text-gray-200" : ""}`}>{fmtM(pd.totalMRR)}/mo</span></div>
             <div className="flex justify-between text-sm"><span className={darkMode ? "text-gray-400" : "text-gray-500"}>Rev at Risk</span><span className="font-semibold text-red-600">{fmtM(pd.atRiskRev)}</span></div>
           </div>
-          <button onClick={() => setExpandedPod(expandedPod === pd.pod.id ? null : pd.pod.id)} className={`text-xs font-medium ${darkMode ? "text-blue-400 hover:text-blue-300" : "text-blue-600 hover:text-blue-800"}`}>
-            {expandedPod === pd.pod.id ? "Hide clients" : `Show ${pd.clients.length} clients`}
-          </button>
+          <div className="flex items-center gap-3">
+            <button onClick={() => setExpandedPod(expandedPod === pd.pod.id ? null : pd.pod.id)} className={`text-xs font-medium ${darkMode ? "text-blue-400 hover:text-blue-300" : "text-blue-600 hover:text-blue-800"}`}>
+              {expandedPod === pd.pod.id ? "Hide clients" : `Show ${pd.clients.length} clients`}
+            </button>
+            {pd.clients.length === 0 && <button onClick={() => deletePod(pd.pod.id)} className="text-xs text-red-500 hover:text-red-700">Delete pod</button>}
+          </div>
           {expandedPod === pd.pod.id && <div className="mt-3 space-y-1 border-t pt-2">
             {pd.clients.map(c => (
               <div key={c.id} className={`flex items-center gap-2 py-1.5 px-2 rounded cursor-pointer ${darkMode ? "hover:bg-slate-700" : "hover:bg-gray-50"}`} onClick={() => onSelect(c.id)}>
@@ -510,6 +587,92 @@ function PodsTab({ stats, onSelect, darkMode, settings }: { stats: ClientStat[];
           </div>}
         </div>;
       })}
+    </div>
+  </div>;
+}
+
+// ===== TEAM =====
+function TeamTab({ stats, onSelect, darkMode, settings }: { stats: ClientStat[]; onSelect: (id: string) => void; darkMode?: boolean; settings?: Settings }) {
+  const teamData = useMemo(() => {
+    // Group clients by lead advisor + WPA
+    const teamMembers = new Map<string, { role: string; clients: ClientStat[] }>();
+
+    for (const c of stats) {
+      // Lead advisor
+      if (c.leadAdvisor) {
+        if (!teamMembers.has(c.leadAdvisor)) teamMembers.set(c.leadAdvisor, { role: "Advisor", clients: [] });
+        teamMembers.get(c.leadAdvisor)!.clients.push(c);
+      }
+      // WPA
+      if (c.wpa && c.wpa !== c.leadAdvisor) {
+        if (!teamMembers.has(c.wpa)) teamMembers.set(c.wpa, { role: "WPA", clients: [] });
+        teamMembers.get(c.wpa)!.clients.push(c);
+      }
+    }
+
+    return Array.from(teamMembers.entries()).map(([name, { role, clients }]) => {
+      const scored = clients.filter(c => c.latestScore != null);
+      const avgScore = scored.length ? scored.reduce((s, c) => s + (c.latestScore || 0), 0) / scored.length : null;
+      const status = getStatus(avgScore, settings);
+      const totalMRR = clients.reduce((s, c) => s + c.monthlyFee, 0);
+      const atRiskCount = scored.filter(c => c.status === "AT RISK").length;
+      const watchCount = scored.filter(c => c.status === "WATCH").length;
+      const healthyCount = scored.filter(c => c.status === "HEALTHY").length;
+      return { name, role, clients, scored: scored.length, avgScore, status, totalMRR, atRiskCount, watchCount, healthyCount };
+    }).sort((a, b) => (b.avgScore || 0) - (a.avgScore || 0));
+  }, [stats, settings]);
+
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  return <div className="space-y-4">
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <StatCard label="Team Members" value={teamData.length} darkMode={darkMode} />
+      <StatCard label="Avg Health Score" value={(() => { const s = teamData.filter(t => t.avgScore != null); return s.length ? (s.reduce((a, t) => a + (t.avgScore || 0), 0) / s.length).toFixed(1) : "N/A"; })()} darkMode={darkMode} />
+      <StatCard label="Total Clients" value={stats.length} darkMode={darkMode} />
+      <StatCard label="Total MRR" value={fmtM(stats.reduce((s, c) => s + c.monthlyFee, 0))} color="#1B2A4A" darkMode={darkMode} />
+    </div>
+
+    <div className={`rounded-xl border overflow-hidden ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
+      <table className="w-full text-sm">
+        <thead><tr className={darkMode ? "bg-slate-700" : "bg-gray-50"}>
+          <th className={`text-left px-4 py-2.5 text-xs font-semibold ${darkMode ? "text-gray-300" : "text-gray-600"}`}>Team Member</th>
+          <th className={`text-center px-2 py-2.5 text-xs font-semibold ${darkMode ? "text-gray-300" : "text-gray-600"}`}>Role</th>
+          <th className={`text-center px-2 py-2.5 text-xs font-semibold ${darkMode ? "text-gray-300" : "text-gray-600"}`}>Clients</th>
+          <th className={`text-center px-2 py-2.5 text-xs font-semibold ${darkMode ? "text-gray-300" : "text-gray-600"}`}>Avg Score</th>
+          <th className={`text-center px-2 py-2.5 text-xs font-semibold hidden sm:table-cell ${darkMode ? "text-gray-300" : "text-gray-600"}`}>Healthy</th>
+          <th className={`text-center px-2 py-2.5 text-xs font-semibold hidden sm:table-cell ${darkMode ? "text-gray-300" : "text-gray-600"}`}>Watch</th>
+          <th className={`text-center px-2 py-2.5 text-xs font-semibold hidden sm:table-cell ${darkMode ? "text-gray-300" : "text-gray-600"}`}>At Risk</th>
+          <th className={`text-right px-4 py-2.5 text-xs font-semibold ${darkMode ? "text-gray-300" : "text-gray-600"}`}>MRR</th>
+        </tr></thead>
+        <tbody>
+          {teamData.map(tm => (
+            <Fragment key={tm.name}>
+              <tr className={`border-t cursor-pointer ${darkMode ? "border-slate-700 hover:bg-slate-700" : "border-gray-100 hover:bg-gray-50"}`} onClick={() => setExpanded(expanded === tm.name ? null : tm.name)}>
+                <td className={`px-4 py-3 font-medium ${darkMode ? "text-gray-200" : "text-gray-900"}`}>{tm.name}</td>
+                <td className="text-center px-2 py-3"><span className={`text-xs px-2 py-0.5 rounded-full ${tm.role === "Advisor" ? (darkMode ? "bg-blue-900/40 text-blue-300" : "bg-blue-100 text-blue-700") : (darkMode ? "bg-purple-900/40 text-purple-300" : "bg-purple-100 text-purple-700")}`}>{tm.role}</span></td>
+                <td className={`text-center px-2 py-3 ${darkMode ? "text-gray-300" : "text-gray-600"}`}>{tm.clients.length}</td>
+                <td className="text-center px-2 py-3"><ScoreCircle score={tm.avgScore} size={32} settings={settings} /></td>
+                <td className={`text-center px-2 py-3 hidden sm:table-cell text-green-600 font-semibold`}>{tm.healthyCount}</td>
+                <td className={`text-center px-2 py-3 hidden sm:table-cell text-amber-600 font-semibold`}>{tm.watchCount}</td>
+                <td className={`text-center px-2 py-3 hidden sm:table-cell text-red-600 font-semibold`}>{tm.atRiskCount}</td>
+                <td className={`text-right px-4 py-3 font-medium ${darkMode ? "text-gray-200" : "text-gray-900"}`}>{fmtM(tm.totalMRR)}</td>
+              </tr>
+              {expanded === tm.name && <tr><td colSpan={8}>
+                <div className={`px-4 py-2 space-y-1 ${darkMode ? "bg-slate-900/50" : "bg-gray-50"}`}>
+                  {tm.clients.map(c => (
+                    <div key={c.id} className={`flex items-center gap-2 py-1.5 px-2 rounded cursor-pointer ${darkMode ? "hover:bg-slate-700" : "hover:bg-white"}`} onClick={() => onSelect(c.id)}>
+                      <span className={`text-sm font-medium flex-1 truncate ${darkMode ? "text-gray-300" : "text-gray-700"}`}>{c.name}</span>
+                      <span className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{c.tier}</span>
+                      <span className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{fmtM(c.monthlyFee)}/mo</span>
+                      <Badge status={c.status} sm />
+                    </div>
+                  ))}
+                </div>
+              </td></tr>}
+            </Fragment>
+          ))}
+        </tbody>
+      </table>
     </div>
   </div>;
 }
@@ -811,6 +974,27 @@ function NPSTab({ stats, npsFeedback, onAddFeedback, darkMode }: {
         <span className="text-red-700">Detractor (0-6)</span>
       </div>
     </div>}
+
+    {/* Send NPS Survey */}
+    <div className={`rounded-xl border p-4 sm:p-5 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
+      <h3 className={`text-sm font-semibold mb-3 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>SEND NPS SURVEY</h3>
+      <p className={`text-xs mb-3 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Generate a unique survey link for a client. They can fill it out and it feeds directly into their profile.</p>
+      <div className="flex items-end gap-2">
+        <div className="flex-1"><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Client</label>
+          <select id="nps-survey-client" className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} defaultValue="">
+            <option value="">Select client...</option>
+            {stats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+        <button onClick={() => {
+          const sel = document.getElementById("nps-survey-client") as HTMLSelectElement;
+          const cId = sel?.value; if (!cId) return;
+          const cl = stats.find(c => c.id === cId); if (!cl) return;
+          const link = generateNPSSurveyLink(cId, cl.name);
+          navigator.clipboard.writeText(link).then(() => { alert("Survey link copied to clipboard!\n\n" + link); });
+        }} className="bg-purple-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-purple-700 whitespace-nowrap">Copy Survey Link</button>
+      </div>
+    </div>
 
     {/* Add feedback form */}
     <div className={`rounded-xl border p-4 sm:p-5 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
@@ -1316,7 +1500,7 @@ function ClientDetail({ client, scores, wows, referrals, onBack, onScore, onAddW
         <div className="space-y-4">
           {/* AI Narrative Briefing — the main event */}
           <div className={`rounded-lg p-4 ${darkMode ? "bg-slate-700/50 border border-slate-600" : "bg-blue-50/50 border border-blue-100"}`}>
-            <div className={`text-sm leading-relaxed whitespace-pre-line ${darkMode ? "text-gray-200" : "text-gray-800"}`}>{execSummary.narrative}</div>
+            <div className={`text-sm leading-relaxed whitespace-pre-line ${darkMode ? "text-gray-200" : "text-gray-800"}`} dangerouslySetInnerHTML={{ __html: execSummary.narrative.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>') }} />
           </div>
 
           {/* Collapsible raw data */}
@@ -1425,19 +1609,39 @@ function ScoringForm({ client, existingScore, onSave, onCancel, darkMode, settin
   const [assessor, setAssessor] = useState(existingScore?.assessor ?? "");
   const [notes, setNotes] = useState(existingScore?.notes ?? "");
   const [actions, setActions] = useState(existingScore?.actionItems ?? "");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState("");
   const weighted = calcScore(scoreVals); const status = getStatus(weighted, settings);
   const upd = (i: number, v: string) => { const n = [...scoreVals]; n[i] = Math.max(1, Math.min(10, Number(v) || 5)); setScoreVals(n); };
   const effectiveWeights = getEffectiveWeights(settings);
+
+  const handleAIScore = async () => {
+    setAiLoading(true); setAiError("");
+    try {
+      const result = await fetchAIScore(client.name, client.wealthboxId, client.slackChannelId, client.googleDriveFolderId);
+      setScoreVals(result.scores);
+      setNotes(result.observations);
+      setActions(result.actionItems);
+      setAssessor("AI");
+    } catch (err) {
+      setAiError(err instanceof Error ? err.message : "AI scoring failed");
+    } finally { setAiLoading(false); }
+  };
 
   return <div className="space-y-4 sm:space-y-5">
     <button onClick={onCancel} className="text-sm text-blue-600 hover:text-blue-800">{"\u2190"} Back</button>
     <div className={`rounded-xl border p-4 sm:p-5 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
       <h2 className={`text-base sm:text-lg font-bold mb-1 ${darkMode ? "text-gray-100" : "text-gray-900"}`}>Score: {client.name}</h2>
-      <div className="flex gap-3 mb-4 flex-wrap">
+      <div className="flex gap-3 mb-4 flex-wrap items-end">
         <div><label className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Month</label><select className={`block border rounded px-2 py-1 text-sm mt-0.5 ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={month} onChange={e => setMonth(Number(e.target.value))}>{MO.map((m, i) => <option key={i} value={i}>{m}</option>)}</select></div>
         <div><label className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Year</label><input type="number" className={`block border rounded px-2 py-1 text-sm w-20 mt-0.5 ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={year} onChange={e => setYear(Number(e.target.value))} /></div>
-        <div><label className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Assessor</label><select className={`block border rounded px-2 py-1 text-sm mt-0.5 ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={assessor} onChange={e => setAssessor(e.target.value)}><option value="">Select...</option>{ADVISORS.map(a => <option key={a}>{a}</option>)}</select></div>
+        <div><label className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Assessor</label><select className={`block border rounded px-2 py-1 text-sm mt-0.5 ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={assessor} onChange={e => setAssessor(e.target.value)}><option value="">Select...</option>{ADVISORS.map(a => <option key={a}>{a}</option>)}<option value="AI">AI</option></select></div>
+        <button onClick={handleAIScore} disabled={aiLoading} className={`px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1.5 ${aiLoading ? "opacity-50" : ""} bg-purple-600 text-white hover:bg-purple-700`}>
+          {aiLoading ? <span className="animate-spin inline-block">{"\u21BB"}</span> : <span>{"\u2728"}</span>}
+          {aiLoading ? "Scoring..." : "AI Score"}
+        </button>
       </div>
+      {aiError && <div className="text-sm text-red-500 mb-3">{aiError}</div>}
       <div className="flex items-center gap-4 p-3 rounded-lg mb-4" style={{ background: sColor(status).bg, border: `1px solid ${sColor(status).bd}` }}><ScoreCircle score={weighted} size={52} settings={settings} /><div><div className="text-sm font-semibold" style={{ color: sColor(status).tx }}>{status || "Score all metrics"}</div><div className="text-xs text-gray-500">Weighted: {weighted?.toFixed(2)}</div></div></div>
       {DIMENSIONS.map(dim => <div key={dim} className="mb-4"><h3 className={`text-sm font-semibold mb-2 ${darkMode ? "text-gray-300" : "text-gray-700"}`}>{dim} <span className={`font-normal text-xs ${darkMode ? "text-gray-500" : "text-gray-400"}`}>({((effectiveWeights[dim] || 0) * 100).toFixed(0)}%)</span></h3>
         {METRICS.filter(m => m.dim === dim).map(m => <div key={m.id} className="mb-3"><div className="flex items-center gap-2 mb-1"><div className={`w-40 text-xs font-medium ${darkMode ? "text-gray-300" : "text-gray-700"}`}>{m.name} ({(m.weight * 100).toFixed(0)}%)</div><input type="range" min="1" max="10" value={scoreVals[m.id] ?? 5} onChange={e => upd(m.id, e.target.value)} className="flex-1 h-2 accent-blue-600" /><input type="number" min="1" max="10" value={scoreVals[m.id] ?? 5} onChange={e => upd(m.id, e.target.value)} className={`w-12 text-center border rounded text-sm py-0.5 ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} /></div><div className={`text-[10px] ml-1 leading-tight ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{m.helper}</div></div>)}
@@ -1455,7 +1659,7 @@ function ScoringForm({ client, existingScore, onSave, onCancel, darkMode, settin
 }
 
 // ===== CLIENT FORM (with referral fields) =====
-function ClientForm({ client, onSave, onCancel, referralSources, darkMode }: { client?: Client; onSave: (c: Client) => void; onCancel: () => void; referralSources?: string[]; darkMode?: boolean }) {
+function ClientForm({ client, onSave, onCancel, referralSources, darkMode, settings }: { client?: Client; onSave: (c: Client) => void; onCancel: () => void; referralSources?: string[]; darkMode?: boolean; settings?: Settings }) {
   const sources = referralSources || REFERRAL_SOURCES;
   const [name, setName] = useState(client?.name ?? "");
   const [tier, setTier] = useState(client?.tier ?? "FFO");
@@ -1468,6 +1672,7 @@ function ClientForm({ client, onSave, onCancel, referralSources, darkMode }: { c
   const [pod, setPod] = useState(client?.pod ?? "");
   const [wpa, setWpa] = useState(client?.wpa ?? "");
   const [slackCh, setSlackCh] = useState(client?.slackChannelId ?? "");
+  const [gdFolderId, setGdFolderId] = useState(client?.googleDriveFolderId ?? "");
 
   return <div className="space-y-5">
     <button onClick={onCancel} className="text-sm text-blue-600 hover:text-blue-800">{"\u2190"} Back</button>
@@ -1488,16 +1693,19 @@ function ClientForm({ client, onSave, onCancel, referralSources, darkMode }: { c
           <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Referred By</label><input className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200 placeholder-gray-500" : "border-gray-200 bg-white"}`} value={refBy} onChange={e => setRefBy(e.target.value)} placeholder="Client name or COI" /></div>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Pod</label><select className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={pod} onChange={e => setPod(e.target.value)}><option value="">Auto (by advisor)</option>{DEFAULT_PODS.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
+          <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Pod</label><select className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={pod} onChange={e => setPod(e.target.value)}><option value="">Auto (by advisor)</option>{getPods(settings).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
           <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>WPA / Wealth Planner</label><input className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200 placeholder-gray-500" : "border-gray-200 bg-white"}`} value={wpa} onChange={e => setWpa(e.target.value)} placeholder="e.g. Thea" /></div>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Wealthbox Contact ID</label><input className={`w-full border rounded-lg px-3 py-2 text-sm font-mono ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200 placeholder-gray-500" : "border-gray-200 bg-white"}`} value={wbId} onChange={e => setWbId(e.target.value)} placeholder="Wealthbox contact ID" /></div>
           <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Slack Channel ID</label><input className={`w-full border rounded-lg px-3 py-2 text-sm font-mono ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200 placeholder-gray-500" : "border-gray-200 bg-white"}`} value={slackCh} onChange={e => setSlackCh(e.target.value)} placeholder="e.g. C0ABCDEF123" /></div>
         </div>
+        <div>
+          <label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Google Drive Folder ID</label><input className={`w-full border rounded-lg px-3 py-2 text-sm font-mono ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200 placeholder-gray-500" : "border-gray-200 bg-white"}`} value={gdFolderId} onChange={e => setGdFolderId(e.target.value)} placeholder="Folder ID from Google Drive URL" />
+        </div>
       </div>
       <div className="flex gap-2 mt-4">
-        <button onClick={() => onSave({ id: client?.id || ("c" + Date.now()), name, tier, leadAdvisor: adv, onboardDate: date, monthlyFee: mFee, referralSource: refSrc, referredBy: refBy, wealthboxId: wbId || undefined, pod: pod || undefined, wpa: wpa || undefined, slackChannelId: slackCh || undefined })} disabled={!name.trim()} className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40">Save</button>
+        <button onClick={() => onSave({ id: client?.id || ("c" + Date.now()), name, tier, leadAdvisor: adv, onboardDate: date, monthlyFee: mFee, referralSource: refSrc, referredBy: refBy, wealthboxId: wbId || undefined, pod: pod || undefined, wpa: wpa || undefined, slackChannelId: slackCh || undefined, googleDriveFolderId: gdFolderId || undefined })} disabled={!name.trim()} className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40">Save</button>
         <button onClick={onCancel} className={`border px-4 py-2 rounded-lg text-sm ${darkMode ? "border-slate-600 text-gray-300 hover:bg-slate-700" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>Cancel</button>
       </div>
     </div>
@@ -1759,7 +1967,8 @@ export default function App() {
         {tab === "baseline" && <BaselineTab stats={stats} onScoreClient={handleBaselineScore} darkMode={darkMode} settings={data.settings} />}
         {tab === "ranking" && <RankingTab clients={visibleClients} scores={data.scores || []} onSelect={go} darkMode={darkMode} settings={data.settings} />}
         {tab === "advisors" && <AdvisorTab stats={stats} darkMode={darkMode} settings={data.settings} />}
-        {tab === "pods" && <PodsTab stats={stats} onSelect={go} darkMode={darkMode} settings={data.settings} />}
+        {tab === "pods" && <PodsTab stats={stats} onSelect={go} darkMode={darkMode} settings={data.settings} onSaveSettings={handleSaveSettings} />}
+        {tab === "team" && <TeamTab stats={stats} onSelect={go} darkMode={darkMode} settings={data.settings} />}
         {tab === "compliance" && <ComplianceTab stats={stats} onSelect={go} darkMode={darkMode} />}
         {tab === "alerts" && <AlertsTab stats={stats} onSelect={go} darkMode={darkMode} />}
         {tab === "revenue" && <RevenueTab stats={stats} darkMode={darkMode} settings={data.settings} />}
@@ -1771,8 +1980,8 @@ export default function App() {
 
       {view === "detail" && selectedStat && <ClientDetail client={selectedStat} scores={data.scores || []} wows={data.wows || []} referrals={data.referrals || []} onBack={back} onScore={() => setView("score")} onAddWow={() => setView("addWow")} onEditClient={() => setView("editClient")} onExportPDF={handleExportClientPDF} user={currentUser} darkMode={darkMode} settings={data.settings} />}
       {view === "score" && selected && <ScoringForm client={selected} existingScore={(data.scores || []).find(s => s.clientId === selectedId && s.year === new Date().getFullYear() && s.month === new Date().getMonth())} onSave={handleSaveScore} onCancel={() => { setBaselineAutoAdvance(false); if (selectedId) setView("detail"); else { setView("dashboard"); setTab("baseline"); } }} darkMode={darkMode} settings={data.settings} />}
-      {view === "addClient" && <ClientForm onSave={handleSaveClient} onCancel={back} referralSources={getReferralSources(data.settings)} darkMode={darkMode} />}
-      {view === "editClient" && selected && <ClientForm client={selected} onSave={handleSaveClient} onCancel={() => setView("detail")} referralSources={getReferralSources(data.settings)} darkMode={darkMode} />}
+      {view === "addClient" && <ClientForm onSave={handleSaveClient} onCancel={back} referralSources={getReferralSources(data.settings)} darkMode={darkMode} settings={data.settings} />}
+      {view === "editClient" && selected && <ClientForm client={selected} onSave={handleSaveClient} onCancel={() => setView("detail")} referralSources={getReferralSources(data.settings)} darkMode={darkMode} settings={data.settings} />}
       {view === "addWow" && selected && <WowForm clientId={selectedId!} onSave={handleSaveWow} onCancel={() => setView("detail")} darkMode={darkMode} />}
       {view === "addRef" && <ReferralForm clients={data.clients} onSave={handleSaveRef} onCancel={() => { setView("dashboard"); setTab("referrals"); }} referralSources={getReferralSources(data.settings)} darkMode={darkMode} />}
     </div>
