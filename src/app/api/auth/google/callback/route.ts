@@ -27,7 +27,8 @@ export async function GET(request: Request) {
     });
   }
 
-  const redirectUri = `${process.env.NEXT_PUBLIC_BASE_URL || process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000'}/api/auth/google/callback`;
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://ffo-health.vercel.app';
+  const redirectUri = `${baseUrl}/api/auth/google/callback`;
 
   try {
     const tokenResp = await fetch('https://oauth2.googleapis.com/token', {
