@@ -1639,7 +1639,7 @@ function ScoringForm({ client, existingScore, onSave, onCancel, darkMode, settin
     setAiLoading(true); setAiError("");
     try {
       const clientWows = (wows || []).filter(w => w.clientId === client.id);
-      const result = await fetchAIScore(client.name, client.wealthboxId, client.slackChannelId, client.googleDriveFolderId, clientWows);
+      const result = await fetchAIScore(client.name, client.wealthboxId, client.slackChannelId, client.googleDriveFolderId, clientWows, month, year);
       setScoreVals(result.scores);
       setNotes(result.observations);
       setActions(result.actionItems);

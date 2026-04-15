@@ -162,15 +162,29 @@ async function getGoogleDriveTranscripts(folderId: string): Promise<Array<{ name
 
 export async function POST(request: Request) {
   try {
-    const { clientName, wealthboxId, slackChannelId, googleDriveFolderId, wows } = await request.json();
+    const { clientName, wealthboxId, slackChannelId, googleDriveFolderId, wows, scoringMonth, scoringYear } = await request.json();
 
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
       return NextResponse.json({ success: false, error: 'ANTHROPIC_API_KEY not configured' }, { status: 500 });
     }
 
+    // Determine the scoring period (specific month or current month)
+    const now = new Date();
+    const sMonth = scoringMonth ?? now.getMonth();
+    const sYear = scoringYear ?? now.getFullYear();
+    const periodStart = new Date(sYear, sMonth, 1);
+    const periodEnd = new Date(sYear, sMonth + 1, 0, 23, 59, 59);
+    const periodLabel = `${periodStart.toLocaleString('en-US', { month: 'long' })} ${sYear}`;
+
+    const inPeriod = (dateStr: string | undefined) => {
+      if (!dateStr) return false;
+      const d = new Date(dateStr);
+      return d >= periodStart && d <= periodEnd;
+    };
+
     // Fetch all data sources in parallel
-    const [completedTasks, openTasks, events, notes, slackMessages, transcripts] = await Promise.all([
+    const [allCompletedTasks, allOpenTasks, allEvents, allNotes, allSlackMessages, transcripts] = await Promise.all([
       wealthboxId ? (loadWealthboxUsers().then(() => getCompletedTasksForContact(wealthboxId))) : Promise.resolve([]),
       wealthboxId ? getOpenTasksForContact(wealthboxId) : Promise.resolve([]),
       wealthboxId ? getEventsForContact(wealthboxId) : Promise.resolve([]),
@@ -178,6 +192,13 @@ export async function POST(request: Request) {
       getSlackMessages(slackChannelId || ''),
       getGoogleDriveTranscripts(googleDriveFolderId || ''),
     ]);
+
+    // Filter to scoring month
+    const completedTasks = allCompletedTasks.filter((t: any) => inPeriod(t.due_date || t.updated_at));
+    const openTasks = allOpenTasks; // open tasks are always relevant
+    const events = allEvents.filter((e: any) => inPeriod(e.starts_at || e.created_at));
+    const notes = allNotes.filter((n: any) => inPeriod(n.created_at));
+    const slackMessages = allSlackMessages.filter(m => inPeriod(m.ts));
 
     // Build data context
     const completedList = completedTasks.slice(0, 30).map((t: any) =>
@@ -240,7 +261,8 @@ export async function POST(request: Request) {
       `--- ${t.name} (${new Date(t.date).toLocaleDateString()}) ---\n${t.content}`
     ).join('\n\n') || 'No call transcripts available';
 
-    const wowList = (wows || []).map((w: any) =>
+    const periodWows = (wows || []).filter((w: any) => inPeriod(w.date));
+    const wowList = periodWows.map((w: any) =>
       `- ${w.date}: ${w.description} (Type: ${w.type}, Owner: ${w.owner})${w.reaction ? ' — Client reaction: ' + w.reaction : ''}`
     ).join('\n') || 'None';
 
@@ -255,10 +277,12 @@ export async function POST(request: Request) {
         role: 'user',
         content: `You are an objective client health scorer for a fractional family office. Score the following client across 16 metrics on a 1-10 scale based on the available data.
 
+IMPORTANT: You are scoring for **${periodLabel}** only. All data below has been filtered to this month. Base your scores on this month's activity.
+
 ## Scoring Criteria
 ${scoringCriteria}
 
-## Client Data for: ${clientName}
+## Client Data for: ${clientName} — Scoring Period: ${periodLabel}
 
 ### Completed Tasks (${completedTasks.length})
 ${completedList}
@@ -281,7 +305,7 @@ ${responseTimeAnalysis}
 ### Recent Call Transcripts (${transcripts.length})
 ${transcriptList}
 
-### Wow Moments (${(wows || []).length})
+### Wow Moments (${periodWows.length})
 ${wowList}
 
 ## Instructions
