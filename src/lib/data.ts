@@ -1,8 +1,13 @@
 // === CONSTANTS ===
 export const STORAGE_KEY = "ffo-health-v7";
 export const TIER_REVENUE: Record<string, number> = { "Fractional Family Office": 8000, "FFO Strategic": 4000, "FFO Access": 1500 };
-export const CADENCE_DAYS: Record<string, number> = { "Fractional Family Office": 30, "FFO Strategic": 30, "FFO Access": 90 };
+export const CADENCE_DAYS: Record<string, number> = { "Fractional Family Office": 30, "FFO Strategic": 90, "FFO Access": 90 };
+export const SCORING_FREQUENCY: Record<string, "monthly" | "quarterly"> = { "Fractional Family Office": "monthly", "FFO Strategic": "quarterly", "FFO Access": "quarterly" };
 export const MO = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+export const QUARTERS = ["Q1 (Jan-Mar)", "Q2 (Apr-Jun)", "Q3 (Jul-Sep)", "Q4 (Oct-Dec)"];
+export function quarterFromMonth(month: number): number { return Math.floor(month / 3); }
+export function quarterStartMonth(quarter: number): number { return quarter * 3; }
+export function quarterEndMonth(quarter: number): number { return quarter * 3 + 2; }
 export const TIERS = ["Fractional Family Office", "FFO Strategic", "FFO Access"];
 export const ADVISORS = ["Landon", "Coty"];
 export const WOW_TYPES = ["Explicit", "Secret", "Proactive", "Gift"];

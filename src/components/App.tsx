@@ -11,8 +11,9 @@ import {
   generateNPSSurveyLink, fetchPendingNPSSurveys, parseCSVClients,
   npsCategory, npsColor, latestNPSForClient, getPods, getPodForClient,
   getThresholds, getEffectiveWeights,
-  METRICS, METRIC_COUNT, DIMENSIONS, DIM_WEIGHTS, MO, TIERS, ADVISORS, WOW_TYPES,
-  REFERRAL_SOURCES, NPS_SOURCES, CADENCE_DAYS, TIER_REVENUE, DEFAULT_USERS,
+  METRICS, METRIC_COUNT, DIMENSIONS, DIM_WEIGHTS, MO, QUARTERS, quarterFromMonth, quarterStartMonth, quarterEndMonth,
+  TIERS, ADVISORS, WOW_TYPES,
+  REFERRAL_SOURCES, NPS_SOURCES, CADENCE_DAYS, SCORING_FREQUENCY, TIER_REVENUE, DEFAULT_USERS,
   DEFAULT_CLIENTS, DEFAULT_SCORES, DEFAULT_WOWS, DEFAULT_REFERRALS, DEFAULT_NPS, DEFAULT_PODS
 } from "@/lib/data";
 import { exportClientPDF, exportPortfolioPDF } from "@/lib/pdf";
@@ -1622,7 +1623,9 @@ function ClientDetail({ client, scores, wows, referrals, onBack, onScore, onAddW
 // ===== SCORING FORM =====
 function ScoringForm({ client, existingScore, onSave, onCancel, darkMode, settings, wows }: { client: Client; existingScore?: Score; onSave: (s: Score) => void; onCancel: () => void; darkMode?: boolean; settings?: Settings; wows?: Wow[] }) {
   const now = new Date();
-  const [month, setMonth] = useState(existingScore?.month ?? now.getMonth());
+  const isQuarterly = SCORING_FREQUENCY[client.tier] === "quarterly";
+  const [month, setMonth] = useState(existingScore?.month ?? (isQuarterly ? quarterStartMonth(quarterFromMonth(now.getMonth())) : now.getMonth()));
+  const [quarter, setQuarter] = useState(existingScore ? quarterFromMonth(existingScore.month) : quarterFromMonth(now.getMonth()));
   const [year, setYear] = useState(existingScore?.year ?? now.getFullYear());
   const [scoreVals, setScoreVals] = useState(existingScore?.scores ?? Array(METRIC_COUNT).fill(5));
   const [assessor, setAssessor] = useState(existingScore?.assessor ?? "");
@@ -1635,11 +1638,14 @@ function ScoringForm({ client, existingScore, onSave, onCancel, darkMode, settin
   const upd = (i: number, v: string) => { const n = [...scoreVals]; n[i] = Math.max(1, Math.min(10, Number(v) || 5)); setScoreVals(n); };
   const effectiveWeights = getEffectiveWeights(settings);
 
+  // For quarterly, the score stores the quarter start month
+  const effectiveMonth = isQuarterly ? quarterStartMonth(quarter) : month;
+
   const handleAIScore = async () => {
     setAiLoading(true); setAiError("");
     try {
       const clientWows = (wows || []).filter(w => w.clientId === client.id);
-      const result = await fetchAIScore(client.name, client.wealthboxId, client.slackChannelId, client.googleDriveFolderId, clientWows, month, year);
+      const result = await fetchAIScore(client.name, client.wealthboxId, client.slackChannelId, client.googleDriveFolderId, clientWows, effectiveMonth, year);
       setScoreVals(result.scores);
       setNotes(result.observations);
       setActions(result.actionItems);
@@ -1654,8 +1660,13 @@ function ScoringForm({ client, existingScore, onSave, onCancel, darkMode, settin
     <button onClick={onCancel} className="text-sm text-blue-600 hover:text-blue-800">{"\u2190"} Back</button>
     <div className={`rounded-xl border p-4 sm:p-5 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
       <h2 className={`text-base sm:text-lg font-bold mb-1 ${darkMode ? "text-gray-100" : "text-gray-900"}`}>Score: {client.name}</h2>
+      <div className={`text-xs mb-2 ${darkMode ? "text-gray-500" : "text-gray-400"}`}>{isQuarterly ? "Quarterly" : "Monthly"} scoring ({client.tier})</div>
       <div className="flex gap-3 mb-4 flex-wrap items-end">
-        <div><label className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Month</label><select className={`block border rounded px-2 py-1 text-sm mt-0.5 ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={month} onChange={e => setMonth(Number(e.target.value))}>{MO.map((m, i) => <option key={i} value={i}>{m}</option>)}</select></div>
+        {isQuarterly ? (
+          <div><label className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Quarter</label><select className={`block border rounded px-2 py-1 text-sm mt-0.5 ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={quarter} onChange={e => setQuarter(Number(e.target.value))}>{QUARTERS.map((q, i) => <option key={i} value={i}>{q}</option>)}</select></div>
+        ) : (
+          <div><label className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Month</label><select className={`block border rounded px-2 py-1 text-sm mt-0.5 ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={month} onChange={e => setMonth(Number(e.target.value))}>{MO.map((m, i) => <option key={i} value={i}>{m}</option>)}</select></div>
+        )}
         <div><label className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Year</label><input type="number" className={`block border rounded px-2 py-1 text-sm w-20 mt-0.5 ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={year} onChange={e => setYear(Number(e.target.value))} /></div>
         <div><label className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Assessor</label><select className={`block border rounded px-2 py-1 text-sm mt-0.5 ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={assessor} onChange={e => setAssessor(e.target.value)}><option value="">Select...</option>{ADVISORS.map(a => <option key={a}>{a}</option>)}<option value="AI">AI</option></select></div>
         <button onClick={handleAIScore} disabled={aiLoading} className={`px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1.5 ${aiLoading ? "opacity-50" : ""} bg-purple-600 text-white hover:bg-purple-700`}>
@@ -1674,7 +1685,7 @@ function ScoringForm({ client, existingScore, onSave, onCancel, darkMode, settin
         <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Action Items</label><textarea className={`w-full border rounded-lg p-2 text-sm h-16 ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={actions} onChange={e => setActions(e.target.value)} /></div>
       </div>
       <div className="flex gap-2 mt-4">
-        <button onClick={() => onSave({ clientId: client.id, year, month, scores: scoreVals, assessor, notes, actionItems: actions, ts: new Date().toISOString() })} disabled={!assessor} className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40">Save</button>
+        <button onClick={() => onSave({ clientId: client.id, year, month: effectiveMonth, scores: scoreVals, assessor, notes, actionItems: actions, ts: new Date().toISOString() })} disabled={!assessor} className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40">Save</button>
         <button onClick={onCancel} className={`border px-4 py-2 rounded-lg text-sm ${darkMode ? "border-slate-600 text-gray-300 hover:bg-slate-700" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>Cancel</button>
       </div>
     </div>
@@ -2027,7 +2038,12 @@ export default function App() {
       </>}
 
       {view === "detail" && selectedStat && <ClientDetail client={selectedStat} scores={data.scores || []} wows={data.wows || []} referrals={data.referrals || []} onBack={back} onScore={() => setView("score")} onAddWow={() => setView("addWow")} onEditClient={() => setView("editClient")} onExportPDF={handleExportClientPDF} user={currentUser} darkMode={darkMode} settings={data.settings} />}
-      {view === "score" && selected && <ScoringForm client={selected} existingScore={(data.scores || []).find(s => s.clientId === selectedId && s.year === new Date().getFullYear() && s.month === new Date().getMonth())} onSave={handleSaveScore} onCancel={() => { setBaselineAutoAdvance(false); if (selectedId) setView("detail"); else { setView("dashboard"); setTab("baseline"); } }} darkMode={darkMode} settings={data.settings} wows={data.wows || []} />}
+      {view === "score" && selected && <ScoringForm client={selected} existingScore={(data.scores || []).find(s => {
+        if (s.clientId !== selectedId || s.year !== new Date().getFullYear()) return false;
+        const freq = SCORING_FREQUENCY[selected.tier];
+        if (freq === "quarterly") return quarterFromMonth(s.month) === quarterFromMonth(new Date().getMonth());
+        return s.month === new Date().getMonth();
+      })} onSave={handleSaveScore} onCancel={() => { setBaselineAutoAdvance(false); if (selectedId) setView("detail"); else { setView("dashboard"); setTab("baseline"); } }} darkMode={darkMode} settings={data.settings} wows={data.wows || []} />}
       {view === "addClient" && <ClientForm onSave={handleSaveClient} onCancel={back} referralSources={getReferralSources(data.settings)} darkMode={darkMode} settings={data.settings} />}
       {view === "editClient" && selected && <ClientForm client={selected} onSave={handleSaveClient} onCancel={() => setView("detail")} referralSources={getReferralSources(data.settings)} darkMode={darkMode} settings={data.settings} />}
       {view === "addWow" && selected && <WowForm clientId={selectedId!} onSave={handleSaveWow} onCancel={() => setView("detail")} darkMode={darkMode} />}

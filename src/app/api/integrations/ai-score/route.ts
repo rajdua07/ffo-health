@@ -169,13 +169,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, error: 'ANTHROPIC_API_KEY not configured' }, { status: 500 });
     }
 
-    // Determine the scoring period (specific month or current month)
+    // Determine the scoring period — quarterly periods cover 3 months
     const now = new Date();
     const sMonth = scoringMonth ?? now.getMonth();
     const sYear = scoringYear ?? now.getFullYear();
+    const isQuarterStart = sMonth % 3 === 0;
+    const periodMonths = isQuarterStart ? 3 : 1;
     const periodStart = new Date(sYear, sMonth, 1);
-    const periodEnd = new Date(sYear, sMonth + 1, 0, 23, 59, 59);
-    const periodLabel = `${periodStart.toLocaleString('en-US', { month: 'long' })} ${sYear}`;
+    const periodEnd = new Date(sYear, sMonth + periodMonths, 0, 23, 59, 59);
+    const quarterNames = ['Q1', 'Q2', 'Q3', 'Q4'];
+    const periodLabel = periodMonths === 3
+      ? `${quarterNames[sMonth / 3]} ${sYear} (${periodStart.toLocaleString('en-US', { month: 'short' })} - ${new Date(sYear, sMonth + 2).toLocaleString('en-US', { month: 'short' })})`
+      : `${periodStart.toLocaleString('en-US', { month: 'long' })} ${sYear}`;
 
     const inPeriod = (dateStr: string | undefined) => {
       if (!dateStr) return false;
@@ -326,7 +331,11 @@ Based on ALL the data above, provide scores for each of the 16 metrics. You MUST
   "actionItems": "<1-2 specific action items based on the scoring>"
 }
 
-Each score must be an integer from 1 to 10. Score conservatively — use 5 when data is insufficient. Reference specific data points in each dimension justification.`
+Each score must be an integer from 1 to 10. Score conservatively — use 5 when data is insufficient.
+
+IMPORTANT: For each dimension justification, if there is insufficient data to confidently score any metrics in that dimension, explicitly say "ADVISOR INPUT NEEDED:" followed by which specific metrics the advisor should score manually and why. For example: "ADVISOR INPUT NEEDED: Meeting Attendance and Direct Feedback — no meeting or feedback data available for this period, advisor should score based on their direct experience."
+
+Reference specific data points in each dimension justification.`
       }],
     });
 
