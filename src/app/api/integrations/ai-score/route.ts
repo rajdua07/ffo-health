@@ -90,29 +90,52 @@ async function getGoogleDriveTranscripts(folderId: string): Promise<Array<{ name
 
     const driveHeaders = { 'Authorization': `Bearer ${accessToken}` };
 
-    // List recent files in the folder (last 30 days, text/doc files)
-    const oneMonthAgo = new Date(Date.now() - 30 * 86400000).toISOString();
-    const query = `'${folderId}' in parents and modifiedTime > '${oneMonthAgo}' and trashed = false`;
+    // Recursively find all subfolder IDs under the root folder
+    const allFolderIds = [folderId];
+    const queue = [folderId];
+    while (queue.length > 0) {
+      const parentId = queue.shift()!;
+      try {
+        const subResp = await fetch(
+          `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`'${parentId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`)}&fields=files(id)&pageSize=50`,
+          { headers: driveHeaders }
+        );
+        const subData = await subResp.json();
+        for (const f of (subData.files || [])) {
+          allFolderIds.push(f.id);
+          queue.push(f.id);
+        }
+      } catch { /* skip */ }
+    }
+
+    // Search for recent files across all folders (last 90 days)
+    const lookbackDate = new Date(Date.now() - 90 * 86400000).toISOString();
+    const parentClauses = allFolderIds.map(id => `'${id}' in parents`).join(' or ');
+    const query = `(${parentClauses}) and modifiedTime > '${lookbackDate}' and trashed = false and mimeType != 'application/vnd.google-apps.folder'`;
     const listResp = await fetch(
-      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,modifiedTime)&orderBy=modifiedTime desc&pageSize=10`,
+      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,modifiedTime)&orderBy=modifiedTime desc&pageSize=20`,
       { headers: driveHeaders }
     );
     const listData = await listResp.json();
 
     const transcripts: Array<{ name: string; content: string; date: string }> = [];
 
-    for (const file of (listData.files || []).slice(0, 5)) {
+    for (const file of (listData.files || []).slice(0, 8)) {
       try {
         let content = '';
         if (file.mimeType === 'application/vnd.google-apps.document') {
-          // Export Google Doc as plain text
           const exportResp = await fetch(
             `https://www.googleapis.com/drive/v3/files/${file.id}/export?mimeType=text/plain`,
             { headers: driveHeaders }
           );
           content = await exportResp.text();
+        } else if (file.mimeType === 'application/vnd.google-apps.spreadsheet') {
+          const exportResp = await fetch(
+            `https://www.googleapis.com/drive/v3/files/${file.id}/export?mimeType=text/csv`,
+            { headers: driveHeaders }
+          );
+          content = await exportResp.text();
         } else if (file.mimeType?.startsWith('text/') || file.mimeType === 'application/pdf') {
-          // Download text files directly
           const dlResp = await fetch(
             `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`,
             { headers: driveHeaders }
@@ -123,7 +146,7 @@ async function getGoogleDriveTranscripts(folderId: string): Promise<Array<{ name
         if (content) {
           transcripts.push({
             name: file.name,
-            content: content.slice(0, 3000), // cap per transcript
+            content: content.slice(0, 3000),
             date: file.modifiedTime,
           });
         }
