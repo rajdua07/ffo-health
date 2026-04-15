@@ -601,23 +601,29 @@ function PodsTab({ stats, onSelect, darkMode, settings, onSaveSettings }: { stat
 // ===== TEAM =====
 function TeamTab({ stats, onSelect, darkMode, settings }: { stats: ClientStat[]; onSelect: (id: string) => void; darkMode?: boolean; settings?: Settings }) {
   const teamData = useMemo(() => {
-    // Group clients by lead advisor + WPA
-    const teamMembers = new Map<string, { role: string; clients: ClientStat[] }>();
+    const pods = getPods(settings);
+    // Collect all unique team members from pod definitions
+    const teamMembers = new Map<string, ClientStat[]>();
+    const allNames = new Set<string>();
+    for (const pod of pods) {
+      if (pod.advisor) allNames.add(pod.advisor);
+      if (pod.wp) allNames.add(pod.wp);
+      if (pod.wpa) allNames.add(pod.wpa);
+      if (pod.partner) allNames.add(pod.partner);
+    }
+    Array.from(allNames).forEach(name => teamMembers.set(name, []));
 
+    // Assign clients to each team member they're connected to via their pod
     for (const c of stats) {
-      // Lead advisor
-      if (c.leadAdvisor) {
-        if (!teamMembers.has(c.leadAdvisor)) teamMembers.set(c.leadAdvisor, { role: "Advisor", clients: [] });
-        teamMembers.get(c.leadAdvisor)!.clients.push(c);
-      }
-      // WPA
-      if (c.wpa && c.wpa !== c.leadAdvisor) {
-        if (!teamMembers.has(c.wpa)) teamMembers.set(c.wpa, { role: "WPA", clients: [] });
-        teamMembers.get(c.wpa)!.clients.push(c);
+      const cp = getPodForClient(c, settings);
+      if (!cp) continue;
+      const podMembers = [cp.advisor, cp.wp, cp.wpa, cp.partner].filter(Boolean) as string[];
+      for (const member of podMembers) {
+        if (teamMembers.has(member)) teamMembers.get(member)!.push(c);
       }
     }
 
-    return Array.from(teamMembers.entries()).map(([name, { role, clients }]) => {
+    return Array.from(teamMembers.entries()).map(([name, clients]) => {
       const scored = clients.filter(c => c.latestScore != null);
       const avgScore = scored.length ? scored.reduce((s, c) => s + (c.latestScore || 0), 0) / scored.length : null;
       const status = getStatus(avgScore, settings);
@@ -625,7 +631,7 @@ function TeamTab({ stats, onSelect, darkMode, settings }: { stats: ClientStat[];
       const atRiskCount = scored.filter(c => c.status === "AT RISK").length;
       const watchCount = scored.filter(c => c.status === "WATCH").length;
       const healthyCount = scored.filter(c => c.status === "HEALTHY").length;
-      return { name, role, clients, scored: scored.length, avgScore, status, totalMRR, atRiskCount, watchCount, healthyCount };
+      return { name, clients, scored: scored.length, avgScore, status, totalMRR, atRiskCount, watchCount, healthyCount };
     }).sort((a, b) => (b.avgScore || 0) - (a.avgScore || 0));
   }, [stats, settings]);
 
@@ -643,7 +649,6 @@ function TeamTab({ stats, onSelect, darkMode, settings }: { stats: ClientStat[];
       <table className="w-full text-sm">
         <thead><tr className={darkMode ? "bg-slate-700" : "bg-gray-50"}>
           <th className={`text-left px-4 py-2.5 text-xs font-semibold ${darkMode ? "text-gray-300" : "text-gray-600"}`}>Team Member</th>
-          <th className={`text-center px-2 py-2.5 text-xs font-semibold ${darkMode ? "text-gray-300" : "text-gray-600"}`}>Role</th>
           <th className={`text-center px-2 py-2.5 text-xs font-semibold ${darkMode ? "text-gray-300" : "text-gray-600"}`}>Clients</th>
           <th className={`text-center px-2 py-2.5 text-xs font-semibold ${darkMode ? "text-gray-300" : "text-gray-600"}`}>Avg Score</th>
           <th className={`text-center px-2 py-2.5 text-xs font-semibold hidden sm:table-cell ${darkMode ? "text-gray-300" : "text-gray-600"}`}>Healthy</th>
@@ -656,7 +661,6 @@ function TeamTab({ stats, onSelect, darkMode, settings }: { stats: ClientStat[];
             <Fragment key={tm.name}>
               <tr className={`border-t cursor-pointer ${darkMode ? "border-slate-700 hover:bg-slate-700" : "border-gray-100 hover:bg-gray-50"}`} onClick={() => setExpanded(expanded === tm.name ? null : tm.name)}>
                 <td className={`px-4 py-3 font-medium ${darkMode ? "text-gray-200" : "text-gray-900"}`}>{tm.name}</td>
-                <td className="text-center px-2 py-3"><span className={`text-xs px-2 py-0.5 rounded-full ${tm.role === "Advisor" ? (darkMode ? "bg-blue-900/40 text-blue-300" : "bg-blue-100 text-blue-700") : (darkMode ? "bg-purple-900/40 text-purple-300" : "bg-purple-100 text-purple-700")}`}>{tm.role}</span></td>
                 <td className={`text-center px-2 py-3 ${darkMode ? "text-gray-300" : "text-gray-600"}`}>{tm.clients.length}</td>
                 <td className="text-center px-2 py-3"><ScoreCircle score={tm.avgScore} size={32} settings={settings} /></td>
                 <td className={`text-center px-2 py-3 hidden sm:table-cell text-green-600 font-semibold`}>{tm.healthyCount}</td>
@@ -664,7 +668,7 @@ function TeamTab({ stats, onSelect, darkMode, settings }: { stats: ClientStat[];
                 <td className={`text-center px-2 py-3 hidden sm:table-cell text-red-600 font-semibold`}>{tm.atRiskCount}</td>
                 <td className={`text-right px-4 py-3 font-medium ${darkMode ? "text-gray-200" : "text-gray-900"}`}>{fmtM(tm.totalMRR)}</td>
               </tr>
-              {expanded === tm.name && <tr><td colSpan={8}>
+              {expanded === tm.name && <tr><td colSpan={7}>
                 <div className={`px-4 py-2 space-y-1 ${darkMode ? "bg-slate-900/50" : "bg-gray-50"}`}>
                   {tm.clients.map(c => (
                     <div key={c.id} className={`flex items-center gap-2 py-1.5 px-2 rounded cursor-pointer ${darkMode ? "hover:bg-slate-700" : "hover:bg-white"}`} onClick={() => onSelect(c.id)}>
