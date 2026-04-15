@@ -1,9 +1,9 @@
 // === CONSTANTS ===
 export const STORAGE_KEY = "ffo-health-v7";
-export const TIER_REVENUE: Record<string, number> = { FFO: 8000, "FFO Light": 4000, "FFO Access": 1500 };
-export const CADENCE_DAYS: Record<string, number> = { FFO: 30, "FFO Light": 30, "FFO Access": 90 };
+export const TIER_REVENUE: Record<string, number> = { "Fractional Family Office": 8000, "FFO Strategic": 4000, "FFO Access": 1500 };
+export const CADENCE_DAYS: Record<string, number> = { "Fractional Family Office": 30, "FFO Strategic": 30, "FFO Access": 90 };
 export const MO = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-export const TIERS = ["FFO", "FFO Light", "FFO Access"];
+export const TIERS = ["Fractional Family Office", "FFO Strategic", "FFO Access"];
 export const ADVISORS = ["Landon", "Coty"];
 export const WOW_TYPES = ["Explicit", "Secret", "Proactive", "Gift"];
 export const REFERRAL_SOURCES = ["Client Referral", "COI Referral", "Advisor Network", "Event/Seminar", "Digital/Inbound", "Direct Outreach"];
@@ -348,13 +348,13 @@ export const DEFAULT_USERS: UserProfile[] = [
 
 export const DEFAULT_CLIENTS: Client[] = [
   { id: "c1", name: "Justin Saunders", tier: "FFO Access", leadAdvisor: "Coty", pod: "pod2", wpa: "Vinny", onboardDate: "2024-08-05", monthlyFee: 1500, referralSource: "Advisor Network", wealthboxId: "54433077" },
-  { id: "c2", name: "Steve Wahl", tier: "FFO", leadAdvisor: "Landon", pod: "pod1", wpa: "Thea", onboardDate: "2025-06-01", monthlyFee: 10000, referralSource: "COI Referral", referredBy: "James Patterson, CPA" },
-  { id: "c3", name: "Zac Saffron", tier: "FFO Light", leadAdvisor: "Coty", pod: "pod2", wpa: "Vinny", onboardDate: "2025-09-10", monthlyFee: 3800, referralSource: "Event/Seminar" },
-  { id: "c4", name: "Victoria Duke", tier: "FFO", leadAdvisor: "Coty", pod: "pod2", wpa: "Vinny", onboardDate: "2025-04-22", monthlyFee: 9000, referralSource: "Client Referral" },
-  { id: "c5", name: "Chris Licht", tier: "FFO", leadAdvisor: "Landon", pod: "pod1", wpa: "Thea", onboardDate: "2025-08-15", monthlyFee: 5000, referralSource: "COI Referral" },
-  { id: "c6", name: "Justin Buonomo", tier: "FFO Light", leadAdvisor: "Coty", pod: "pod2", wpa: "Vinny", onboardDate: "2025-11-20", monthlyFee: 4500, referralSource: "Digital/Inbound" },
-  { id: "c7", name: "Blake Saunders", tier: "FFO", leadAdvisor: "Landon", pod: "pod1", wpa: "Thea", onboardDate: "2025-03-15", monthlyFee: 12000, referralSource: "Client Referral" },
-  { id: "c8", name: "Anthony Cirino", tier: "FFO", leadAdvisor: "Landon", pod: "pod1", wpa: "Thea", onboardDate: "2025-01-12", monthlyFee: 15000, referralSource: "Direct Outreach" },
+  { id: "c2", name: "Steve Wahl", tier: "Fractional Family Office", leadAdvisor: "Landon", pod: "pod1", wpa: "Thea", onboardDate: "2025-06-01", monthlyFee: 10000, referralSource: "COI Referral", referredBy: "James Patterson, CPA" },
+  { id: "c3", name: "Zac Saffron", tier: "FFO Strategic", leadAdvisor: "Coty", pod: "pod2", wpa: "Vinny", onboardDate: "2025-09-10", monthlyFee: 3800, referralSource: "Event/Seminar" },
+  { id: "c4", name: "Victoria Duke", tier: "Fractional Family Office", leadAdvisor: "Coty", pod: "pod2", wpa: "Vinny", onboardDate: "2025-04-22", monthlyFee: 9000, referralSource: "Client Referral" },
+  { id: "c5", name: "Chris Licht", tier: "Fractional Family Office", leadAdvisor: "Landon", pod: "pod1", wpa: "Thea", onboardDate: "2025-08-15", monthlyFee: 5000, referralSource: "COI Referral" },
+  { id: "c6", name: "Justin Buonomo", tier: "FFO Strategic", leadAdvisor: "Coty", pod: "pod2", wpa: "Vinny", onboardDate: "2025-11-20", monthlyFee: 4500, referralSource: "Digital/Inbound" },
+  { id: "c7", name: "Blake Saunders", tier: "Fractional Family Office", leadAdvisor: "Landon", pod: "pod1", wpa: "Thea", onboardDate: "2025-03-15", monthlyFee: 12000, referralSource: "Client Referral" },
+  { id: "c8", name: "Anthony Cirino", tier: "Fractional Family Office", leadAdvisor: "Landon", pod: "pod1", wpa: "Thea", onboardDate: "2025-01-12", monthlyFee: 15000, referralSource: "Direct Outreach" },
 ];
 
 // 16-metric scores (added Referral Activity [14] and Network Advocacy [15])

@@ -1674,18 +1674,18 @@ function ScoringForm({ client, existingScore, onSave, onCancel, darkMode, settin
 // ===== CLIENT FORM (with referral fields) =====
 function ClientForm({ client, onSave, onCancel, referralSources, darkMode, settings }: { client?: Client; onSave: (c: Client) => void; onCancel: () => void; referralSources?: string[]; darkMode?: boolean; settings?: Settings }) {
   const sources = referralSources || REFERRAL_SOURCES;
+  const allPods = getPods(settings);
   const [name, setName] = useState(client?.name ?? "");
-  const [tier, setTier] = useState(client?.tier ?? "FFO");
-  const [adv, setAdv] = useState(client?.leadAdvisor ?? "Landon");
+  const [tier, setTier] = useState(client?.tier ?? TIERS[0]);
   const [date, setDate] = useState(client?.onboardDate ?? new Date().toISOString().slice(0, 10));
-  const [mFee, setMFee] = useState(client?.monthlyFee ?? TIER_REVENUE.FFO);
+  const [mFee, setMFee] = useState(client?.monthlyFee ?? TIER_REVENUE[TIERS[0]]);
   const [refSrc, setRefSrc] = useState(client?.referralSource ?? "");
   const [refBy, setRefBy] = useState(client?.referredBy ?? "");
   const [wbId, setWbId] = useState(client?.wealthboxId ?? "");
   const [pod, setPod] = useState(client?.pod ?? "");
-  const [wpa, setWpa] = useState(client?.wpa ?? "");
   const [slackCh, setSlackCh] = useState(client?.slackChannelId ?? "");
   const [gdFolderId, setGdFolderId] = useState(client?.googleDriveFolderId ?? "");
+  const selectedPod = allPods.find(p => p.id === pod);
 
   return <div className="space-y-5">
     <button onClick={onCancel} className="text-sm text-blue-600 hover:text-blue-800">{"\u2190"} Back</button>
@@ -1695,8 +1695,11 @@ function ClientForm({ client, onSave, onCancel, referralSources, darkMode, setti
         <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Name</label><input className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={name} onChange={e => setName(e.target.value)} /></div>
         <div className="grid grid-cols-2 gap-3">
           <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Tier</label><select className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={tier} onChange={e => { setTier(e.target.value); if (!client) setMFee(TIER_REVENUE[e.target.value] || 5000); }}>{TIERS.map(t => <option key={t}>{t}</option>)}</select></div>
-          <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Advisor</label><select className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={adv} onChange={e => setAdv(e.target.value)}>{ADVISORS.map(a => <option key={a}>{a}</option>)}</select></div>
+          <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Pod</label><select className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={pod} onChange={e => setPod(e.target.value)}><option value="">Select pod...</option>{allPods.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
         </div>
+        {selectedPod && <div className={`text-xs px-3 py-2 rounded-lg ${darkMode ? "bg-slate-700 text-gray-400" : "bg-gray-50 text-gray-500"}`}>
+          Advisor: {selectedPod.advisor} | WP: {selectedPod.wp} | WPA: {selectedPod.wpa}{selectedPod.partner ? ` | Partner: ${selectedPod.partner}` : ""}
+        </div>}
         <div className="grid grid-cols-2 gap-3">
           <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Onboard Date</label><input type="date" className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={date} onChange={e => setDate(e.target.value)} /></div>
           <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Monthly Fee ($)</label><input type="number" className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={mFee} onChange={e => setMFee(Number(e.target.value) || 0)} /></div>
@@ -1704,10 +1707,6 @@ function ClientForm({ client, onSave, onCancel, referralSources, darkMode, setti
         <div className="grid grid-cols-2 gap-3">
           <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Referral Source</label><select className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={refSrc} onChange={e => setRefSrc(e.target.value)}><option value="">Select...</option>{sources.map(s => <option key={s}>{s}</option>)}</select></div>
           <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Referred By</label><input className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200 placeholder-gray-500" : "border-gray-200 bg-white"}`} value={refBy} onChange={e => setRefBy(e.target.value)} placeholder="Client name or COI" /></div>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Pod</label><select className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={pod} onChange={e => setPod(e.target.value)}><option value="">Auto (by advisor)</option>{getPods(settings).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
-          <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>WPA / Wealth Planner</label><input className={`w-full border rounded-lg px-3 py-2 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200 placeholder-gray-500" : "border-gray-200 bg-white"}`} value={wpa} onChange={e => setWpa(e.target.value)} placeholder="e.g. Thea" /></div>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Wealthbox Contact ID</label><input className={`w-full border rounded-lg px-3 py-2 text-sm font-mono ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200 placeholder-gray-500" : "border-gray-200 bg-white"}`} value={wbId} onChange={e => setWbId(e.target.value)} placeholder="Wealthbox contact ID" /></div>
@@ -1718,7 +1717,7 @@ function ClientForm({ client, onSave, onCancel, referralSources, darkMode, setti
         </div>
       </div>
       <div className="flex gap-2 mt-4">
-        <button onClick={() => onSave({ id: client?.id || ("c" + Date.now()), name, tier, leadAdvisor: adv, onboardDate: date, monthlyFee: mFee, referralSource: refSrc, referredBy: refBy, wealthboxId: wbId || undefined, pod: pod || undefined, wpa: wpa || undefined, slackChannelId: slackCh || undefined, googleDriveFolderId: gdFolderId || undefined })} disabled={!name.trim()} className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40">Save</button>
+        <button onClick={() => onSave({ id: client?.id || ("c" + Date.now()), name, tier, leadAdvisor: selectedPod?.advisor || client?.leadAdvisor || "", onboardDate: date, monthlyFee: mFee, referralSource: refSrc, referredBy: refBy, wealthboxId: wbId || undefined, pod: pod || undefined, wpa: selectedPod?.wpa || undefined, slackChannelId: slackCh || undefined, googleDriveFolderId: gdFolderId || undefined })} disabled={!name.trim() || !pod} className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40">Save</button>
         <button onClick={onCancel} className={`border px-4 py-2 rounded-lg text-sm ${darkMode ? "border-slate-600 text-gray-300 hover:bg-slate-700" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>Cancel</button>
       </div>
     </div>
