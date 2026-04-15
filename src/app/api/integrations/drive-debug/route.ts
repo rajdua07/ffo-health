@@ -34,6 +34,13 @@ export async function GET(request: Request) {
 
   const headers = { 'Authorization': `Bearer ${tokenData.access_token}` };
 
+  // Check who we're authenticated as
+  const aboutResp = await fetch(
+    'https://www.googleapis.com/drive/v3/about?fields=user(emailAddress,displayName)',
+    { headers }
+  );
+  const aboutData = await aboutResp.json();
+
   // List direct children of the folder
   const directResp = await fetch(
     `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`'${folderId}' in parents and trashed = false`)}&fields=files(id,name,mimeType,modifiedTime)&orderBy=modifiedTime desc&pageSize=50`,
@@ -59,6 +66,8 @@ export async function GET(request: Request) {
   }
 
   return NextResponse.json({
+    authenticatedAs: aboutData.user || aboutData,
+    rawApiResponse: directData.error || null,
     folderId,
     directChildren: (directData.files || []).map((f: any) => ({
       name: f.name,
