@@ -34,41 +34,61 @@ async function getSlackMessages(channelId: string): Promise<Array<{ author: stri
 }
 
 async function getGoogleDriveTranscripts(folderId: string): Promise<Array<{ name: string; content: string; date: string }>> {
+  // Support both OAuth2 refresh token and service account
+  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
   const serviceAccountKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
-  if (!serviceAccountKey || !folderId) return [];
+
+  if (!folderId) return [];
+  if (!refreshToken && !serviceAccountKey) return [];
 
   try {
-    // Parse the service account JSON
-    const sa = JSON.parse(serviceAccountKey);
+    let accessToken = '';
 
-    // Create JWT for Google API auth
-    const now = Math.floor(Date.now() / 1000);
-    const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
-    const payload = Buffer.from(JSON.stringify({
-      iss: sa.client_email,
-      scope: 'https://www.googleapis.com/auth/drive.readonly',
-      aud: 'https://oauth2.googleapis.com/token',
-      exp: now + 3600,
-      iat: now,
-    })).toString('base64url');
+    if (refreshToken && clientId && clientSecret) {
+      // OAuth2 refresh token flow (preferred)
+      const tokenResp = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: clientId,
+          client_secret: clientSecret,
+          refresh_token: refreshToken,
+          grant_type: 'refresh_token',
+        }),
+      });
+      const tokenData = await tokenResp.json();
+      if (!tokenData.access_token) return [];
+      accessToken = tokenData.access_token;
+    } else if (serviceAccountKey) {
+      // Service account fallback
+      const sa = JSON.parse(serviceAccountKey);
+      const now = Math.floor(Date.now() / 1000);
+      const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
+      const payload = Buffer.from(JSON.stringify({
+        iss: sa.client_email,
+        scope: 'https://www.googleapis.com/auth/drive.readonly',
+        aud: 'https://oauth2.googleapis.com/token',
+        exp: now + 3600,
+        iat: now,
+      })).toString('base64url');
+      const crypto = await import('crypto');
+      const sign = crypto.createSign('RSA-SHA256');
+      sign.update(`${header}.${payload}`);
+      const signature = sign.sign(sa.private_key, 'base64url');
+      const jwt = `${header}.${payload}.${signature}`;
+      const tokenResp = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwt}`,
+      });
+      const tokenData = await tokenResp.json();
+      if (!tokenData.access_token) return [];
+      accessToken = tokenData.access_token;
+    }
 
-    // Sign the JWT with the private key
-    const crypto = await import('crypto');
-    const sign = crypto.createSign('RSA-SHA256');
-    sign.update(`${header}.${payload}`);
-    const signature = sign.sign(sa.private_key, 'base64url');
-    const jwt = `${header}.${payload}.${signature}`;
-
-    // Exchange JWT for access token
-    const tokenResp = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwt}`,
-    });
-    const tokenData = await tokenResp.json();
-    if (!tokenData.access_token) return [];
-
-    const driveHeaders = { 'Authorization': `Bearer ${tokenData.access_token}` };
+    const driveHeaders = { 'Authorization': `Bearer ${accessToken}` };
 
     // List recent files in the folder (last 30 days, text/doc files)
     const oneMonthAgo = new Date(Date.now() - 30 * 86400000).toISOString();
