@@ -184,8 +184,8 @@ export async function POST(request: Request) {
   try {
     const { clientId, wealthboxId, lastCheckinDate, slackChannelId, clientName } = await request.json();
 
-    const sinceDate = lastCheckinDate ? new Date(lastCheckinDate) : new Date(Date.now() - 90 * 86400000);
-    const sinceTs = sinceDate.getTime();
+    // Use 90 days as the lookback window for notes/events regardless of last check-in
+    const lookbackDate = new Date(Date.now() - 90 * 86400000);
 
     // Load user names + fetch all sources in parallel
     const [, completedTasksRaw, openTasksRaw, events, notes, slackMessages] = await Promise.all([
@@ -194,14 +194,15 @@ export async function POST(request: Request) {
       wealthboxId ? getOpenTasksForContact(wealthboxId) : Promise.resolve([]),
       wealthboxId ? getEventsForContact(wealthboxId) : Promise.resolve([]),
       wealthboxId ? getNotesForContact(wealthboxId) : Promise.resolve([]),
-      getSlackChannelMessages(slackChannelId || '', sinceTs),
+      getSlackChannelMessages(slackChannelId || ''),
     ]);
 
-    // Process completed tasks → achievements (with who completed them)
+    // Process ALL completed tasks — don't filter by last check-in date
+    // The Wealthbox API already returns them sorted most-recent-first via resource_id
     const achievementsSinceLastCheckin = completedTasksRaw
-      .filter((t: any) => t.completed_at && new Date(t.completed_at) >= sinceDate)
+      .filter((t: any) => t.completed_at)
       .sort((a: any, b: any) => new Date(b.completed_at).getTime() - new Date(a.completed_at).getTime())
-      .slice(0, 25)
+      .slice(0, 30)
       .map((t: any) => ({
         name: t.name,
         completedAt: t.completed_at!,
@@ -245,7 +246,7 @@ export async function POST(request: Request) {
         date: e.starts_at || e.created_at,
       })),
       ...notes
-        .filter(n => new Date(n.created_at) >= sinceDate)
+        .filter(n => new Date(n.created_at) >= lookbackDate)
         .map(n => ({
           subject: 'Note',
           from: 'Team',
