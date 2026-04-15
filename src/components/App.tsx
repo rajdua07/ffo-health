@@ -1630,6 +1630,7 @@ function ScoringForm({ client, existingScore, onSave, onCancel, darkMode, settin
   const [actions, setActions] = useState(existingScore?.actionItems ?? "");
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState("");
+  const [dimJustifications, setDimJustifications] = useState<Record<string, string>>({});
   const weighted = calcScore(scoreVals); const status = getStatus(weighted, settings);
   const upd = (i: number, v: string) => { const n = [...scoreVals]; n[i] = Math.max(1, Math.min(10, Number(v) || 5)); setScoreVals(n); };
   const effectiveWeights = getEffectiveWeights(settings);
@@ -1642,6 +1643,7 @@ function ScoringForm({ client, existingScore, onSave, onCancel, darkMode, settin
       setScoreVals(result.scores);
       setNotes(result.observations);
       setActions(result.actionItems);
+      setDimJustifications(result.dimensionJustifications || {});
       setAssessor("AI");
     } catch (err) {
       setAiError(err instanceof Error ? err.message : "AI scoring failed");
@@ -1664,6 +1666,7 @@ function ScoringForm({ client, existingScore, onSave, onCancel, darkMode, settin
       {aiError && <div className="text-sm text-red-500 mb-3">{aiError}</div>}
       <div className="flex items-center gap-4 p-3 rounded-lg mb-4" style={{ background: sColor(status).bg, border: `1px solid ${sColor(status).bd}` }}><ScoreCircle score={weighted} size={52} settings={settings} /><div><div className="text-sm font-semibold" style={{ color: sColor(status).tx }}>{status || "Score all metrics"}</div><div className="text-xs text-gray-500">Weighted: {weighted?.toFixed(2)}</div></div></div>
       {DIMENSIONS.map(dim => <div key={dim} className="mb-4"><h3 className={`text-sm font-semibold mb-2 ${darkMode ? "text-gray-300" : "text-gray-700"}`}>{dim} <span className={`font-normal text-xs ${darkMode ? "text-gray-500" : "text-gray-400"}`}>({((effectiveWeights[dim] || 0) * 100).toFixed(0)}%)</span></h3>
+        {dimJustifications[dim] && <div className={`text-xs mb-3 px-3 py-2 rounded-lg italic ${darkMode ? "bg-purple-900/20 text-purple-300 border border-purple-800/30" : "bg-purple-50 text-purple-700 border border-purple-100"}`}>{dimJustifications[dim]}</div>}
         {METRICS.filter(m => m.dim === dim).map(m => <div key={m.id} className="mb-3"><div className="flex items-center gap-2 mb-1"><div className={`w-40 text-xs font-medium ${darkMode ? "text-gray-300" : "text-gray-700"}`}>{m.name} ({(m.weight * 100).toFixed(0)}%)</div><input type="range" min="1" max="10" value={scoreVals[m.id] ?? 5} onChange={e => upd(m.id, e.target.value)} className="flex-1 h-2 accent-blue-600" /><input type="number" min="1" max="10" value={scoreVals[m.id] ?? 5} onChange={e => upd(m.id, e.target.value)} className={`w-12 text-center border rounded text-sm py-0.5 ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} /></div><div className={`text-[10px] ml-1 leading-tight ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{m.helper}</div></div>)}
       </div>)}
       <div className={`space-y-3 mt-4 pt-4 border-t ${darkMode ? "border-slate-700" : "border-gray-100"}`}>

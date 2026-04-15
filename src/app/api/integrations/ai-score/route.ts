@@ -214,7 +214,7 @@ export async function POST(request: Request) {
 
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 2000,
+      max_tokens: 3000,
       messages: [{
         role: 'user',
         content: `You are an objective client health scorer for a fractional family office. Score the following client across 16 metrics on a 1-10 scale based on the available data.
@@ -251,11 +251,19 @@ Based on ALL the data above, provide scores for each of the 16 metrics. You MUST
 
 {
   "scores": [<meeting_attendance>, <response_time>, <communication_quality>, <project_velocity>, <milestone_achievement>, <direct_feedback>, <nps_score>, <complaint_frequency>, <strategy_implementation>, <results_achieved>, <payment_status>, <trust_level>, <partnership_quality>, <referral_willingness>, <referral_activity>, <network_advocacy>],
-  "observations": "<2-3 sentence summary of key observations that drove the scores>",
+  "dimensionJustifications": {
+    "Engagement": "<1-2 sentences explaining the Engagement scores with specific evidence>",
+    "Progress": "<1-2 sentences explaining the Progress scores with specific evidence>",
+    "Satisfaction": "<1-2 sentences explaining the Satisfaction scores with specific evidence>",
+    "Financial Health": "<1-2 sentences explaining the Financial Health scores with specific evidence>",
+    "Relationship": "<1-2 sentences explaining the Relationship scores with specific evidence>",
+    "Referral Awareness": "<1-2 sentences explaining the Referral Awareness scores with specific evidence>"
+  },
+  "observations": "<2-3 sentence overall summary>",
   "actionItems": "<1-2 specific action items based on the scoring>"
 }
 
-Each score must be an integer from 1 to 10. Score conservatively — use 5 when data is insufficient. Reference specific evidence in observations.`
+Each score must be an integer from 1 to 10. Score conservatively — use 5 when data is insufficient. Reference specific data points in each dimension justification.`
       }],
     });
 
@@ -279,6 +287,7 @@ Each score must be an integer from 1 to 10. Score conservatively — use 5 when 
     return NextResponse.json({
       success: true,
       scores: result.scores,
+      dimensionJustifications: result.dimensionJustifications || {},
       observations: result.observations || '',
       actionItems: result.actionItems || '',
       dataSources: {

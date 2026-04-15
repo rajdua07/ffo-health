@@ -530,7 +530,7 @@ export async function fetchAIScore(
   clientName: string, wealthboxId: string | undefined,
   slackChannelId?: string, googleDriveFolderId?: string,
   wows?: Wow[],
-): Promise<{ scores: number[]; observations: string; actionItems: string; dataSources: Record<string, number> }> {
+): Promise<{ scores: number[]; observations: string; actionItems: string; dimensionJustifications: Record<string, string>; dataSources: Record<string, number> }> {
   if (typeof window === "undefined") throw new Error('Not in browser');
   const response = await fetch('/api/integrations/ai-score', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
