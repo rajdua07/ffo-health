@@ -1581,7 +1581,7 @@ function ClientDetail({ client, scores, wows, referrals, onBack, onScore, onAddW
         const avg = dimAvg(latest.scores, dim);
         return <div key={dim} className="mb-3">
           <div className="flex justify-between mb-1"><span className={`text-sm font-medium ${darkMode ? "text-gray-300" : "text-gray-700"}`}>{dim} ({((effectiveWeights[dim] || 0) * 100).toFixed(0)}%)</span><span className="text-sm font-semibold" style={{ color: sColor(getStatus(avg, settings)).tx }}>{avg != null ? avg.toFixed(1) : "\u2014"}</span></div>
-          <div className="grid grid-cols-1 gap-1 ml-3 sm:grid-cols-2 lg:grid-cols-3">{METRICS.filter(m => m.dim === dim).map(m => <div key={m.id} className="flex items-center gap-2"><span className={`text-xs w-28 truncate ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{m.name} ({(m.weight * 100).toFixed(0)}%)</span><MiniBar value={latest.scores[m.id]} /></div>)}</div>
+          <div className="grid grid-cols-1 gap-1 ml-3 sm:grid-cols-2 lg:grid-cols-3">{METRICS.filter(m => m.dim === dim).map(m => <div key={m.id} className="flex items-center gap-2"><span className={`text-xs whitespace-nowrap ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{m.name}</span><MiniBar value={latest.scores[m.id]} /></div>)}</div>
         </div>;
       })}
     </div>}
