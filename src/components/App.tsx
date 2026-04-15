@@ -614,13 +614,18 @@ function TeamTab({ stats, onSelect, darkMode, settings }: { stats: ClientStat[];
     }
     Array.from(allNames).forEach(name => teamMembers.set(name, []));
 
-    // Assign clients to each team member they're connected to via their pod
+    // Assign clients to team members strictly via their explicit pod assignment
     for (const c of stats) {
-      const cp = getPodForClient(c, settings);
+      if (!c.pod) continue; // skip clients not assigned to a pod
+      const cp = pods.find(p => p.id === c.pod);
       if (!cp) continue;
       const podMembers = [cp.advisor, cp.wp, cp.wpa, cp.partner].filter(Boolean) as string[];
       for (const member of podMembers) {
-        if (teamMembers.has(member)) teamMembers.get(member)!.push(c);
+        if (teamMembers.has(member)) {
+          // Avoid counting the same client twice for the same member
+          const existing = teamMembers.get(member)!;
+          if (!existing.some(e => e.id === c.id)) existing.push(c);
+        }
       }
     }
 
