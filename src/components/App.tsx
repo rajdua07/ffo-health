@@ -49,11 +49,11 @@ function TrendArrow({ cur, prev }: { cur: number | null; prev: number | null }) 
   return <span className="text-gray-400 text-sm">{"\u25CF"}</span>;
 }
 
-function Sel({ label, value, onChange, options, darkMode }: { label?: string; value: string; onChange: (v: string) => void; options: string[]; darkMode?: boolean }) {
+function Sel({ label, value, onChange, options, display, darkMode }: { label?: string; value: string; onChange: (v: string) => void; options: string[]; display?: string[]; darkMode?: boolean }) {
   return <div className="flex items-center gap-1.5">
     {label && <span className={`text-xs font-medium ${darkMode ? "text-gray-300" : "text-gray-600"}`}>{label}:</span>}
     <select className={`border rounded-lg px-2 py-1.5 text-sm ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={value} onChange={e => onChange(e.target.value)}>
-      {options.map(o => <option key={o}>{o}</option>)}
+      {options.map((o, i) => <option key={o} value={o}>{display ? display[i] : o}</option>)}
     </select>
   </div>;
 }
@@ -234,20 +234,15 @@ function useClientStats(clients: Client[], scores: Score[], npsFeedback?: NPSFee
 
 // ===== OVERVIEW =====
 function OverviewTab({ stats, onSelect, onAdd, user, darkMode, settings }: { stats: ClientStat[]; onSelect: (id: string) => void; onAdd: () => void; user?: UserProfile; darkMode?: boolean; settings?: Settings }) {
-  const [search, setSearch] = useState(""); const [fT, setFT] = useState("All"); const [fA, setFA] = useState("All"); const [fS, setFS] = useState("All");
-  const [fH, setFH] = useState("All");
+  const [search, setSearch] = useState(""); const [fT, setFT] = useState("All"); const [fP, setFP] = useState("All"); const [fS, setFS] = useState("All");
   const [sortBy, setSortBy] = useState("Score (Low to High)");
-  const { atRisk: atRiskThresh, watch: watchThresh } = getThresholds(settings);
+  const pods = getPods(settings);
 
   const filtered = stats.filter(c => {
     if (fT !== "All" && c.tier !== fT) return false;
-    if (fA !== "All" && c.leadAdvisor !== fA) return false;
+    if (fP !== "All") { const cp = getPodForClient(c, settings); if (!cp || cp.id !== fP) return false; }
     if (fS !== "All" && c.status !== fS) return false;
     if (search && !c.name.toLowerCase().includes(search.toLowerCase())) return false;
-    // Health score range filter
-    if (fH === "At Risk Only" && (c.latestScore == null || c.latestScore >= atRiskThresh)) return false;
-    if (fH === "Watch Only" && (c.latestScore == null || c.latestScore < atRiskThresh || c.latestScore >= watchThresh)) return false;
-    if (fH === "Healthy Only" && (c.latestScore == null || c.latestScore < watchThresh)) return false;
     return true;
   });
   const scored = filtered.filter(c => c.latestScore != null);
@@ -269,9 +264,8 @@ function OverviewTab({ stats, onSelect, onAdd, user, darkMode, settings }: { sta
       <input className={`border rounded-lg px-3 py-1.5 text-sm w-full sm:flex-1 sm:min-w-48 ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200 placeholder-gray-400" : "border-gray-200 bg-white"}`} placeholder="Search..." value={search} onChange={e => setSearch(e.target.value)} />
       <div className="flex flex-wrap gap-2 items-center w-full sm:w-auto">
         <Sel label="Tier" value={fT} onChange={setFT} options={["All", ...TIERS]} darkMode={darkMode} />
-        {canViewAllAdvisors(user) && <Sel label="Advisor" value={fA} onChange={setFA} options={["All", ...ADVISORS]} darkMode={darkMode} />}
+        <Sel label="Pod" value={fP} onChange={setFP} options={["All", ...pods.map(p => p.id)]} display={["All", ...pods.map(p => p.name)]} darkMode={darkMode} />
         <Sel label="Status" value={fS} onChange={setFS} options={["All", "HEALTHY", "WATCH", "AT RISK"]} darkMode={darkMode} />
-        <Sel label="Score Range" value={fH} onChange={setFH} options={["All", "At Risk Only", "Watch Only", "Healthy Only"]} darkMode={darkMode} />
         <Sel label="Sort By" value={sortBy} onChange={setSortBy} options={["Score (Low to High)", "Score (High to Low)", "Name (A-Z)", "Name (Z-A)", "Revenue (High to Low)", "Revenue (Low to High)", "Onboard Date (Newest)", "Onboard Date (Oldest)"]} darkMode={darkMode} />
       </div>
       {canEdit(user) && <button onClick={onAdd} className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-blue-700 w-full sm:w-auto">+ Add Client</button>}
