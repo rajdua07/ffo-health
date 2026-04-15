@@ -60,7 +60,7 @@ function Sel({ label, value, onChange, options, display, darkMode }: { label?: s
 }
 
 function StatCard({ label, value, color = "#111", sub, darkMode }: { label: string; value: string | number; color?: string; sub?: string; darkMode?: boolean }) {
-  return <div className={`rounded-xl border p-2 sm:p-3 text-center ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
+  return <div className={`rounded-xl border p-2.5 sm:p-3.5 text-center shadow-sm ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-100"}`}>
     <div className="text-xl sm:text-2xl font-bold" style={{ color: darkMode ? "#ffffff" : color }}>{value}</div>
     <div className={`text-[10px] sm:text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{label}</div>
     {sub && <div className={`text-[10px] sm:text-xs ${darkMode ? "text-gray-500" : "text-gray-400"}`}>{sub}</div>}
@@ -192,12 +192,10 @@ function ImportDialog({
 
 // ===== TABS =====
 const TABS = [
-  { id: "overview", label: "Overview" }, { id: "baseline", label: "Baseline" },
-  { id: "ranking", label: "Ranking" },
-  { id: "advisors", label: "Advisors" }, { id: "pods", label: "Pods" }, { id: "team", label: "Team" },
+  { id: "overview", label: "Overview" },
+  { id: "pods", label: "Pods" }, { id: "team", label: "Team" },
   { id: "compliance", label: "Compliance" },
   { id: "alerts", label: "Alerts" }, { id: "revenue", label: "Revenue" },
-  { id: "referrals", label: "Referrals" }, { id: "activity", label: "Activity" },
   { id: "nps", label: "NPS" },
   { id: "settings", label: "Settings" },
 ];
@@ -289,7 +287,7 @@ function OverviewTab({ stats, onSelect, onAdd, user, darkMode, settings }: { sta
               <h3 className={`font-semibold truncate group-hover:text-blue-600 ${darkMode ? "text-gray-100" : "text-gray-900"}`}>{c.name}</h3>
               <div className="flex items-center gap-2 mt-1 flex-wrap">
                 <span className={`text-xs px-2 py-0.5 rounded ${darkMode ? "bg-slate-700 text-gray-300" : "bg-gray-100 text-gray-600"}`}>{c.tier}</span>
-                <span className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-400"}`}>{c.leadAdvisor}</span>
+                <span className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-400"}`}>{(() => { const p = getPodForClient(c, settings); return p ? p.name : c.leadAdvisor; })()}</span>
                 <span className={`text-xs font-medium ${darkMode ? "text-gray-400" : "text-gray-400"}`}>{fmtM(c.monthlyFee)}/mo</span>
               </div>
             </div>
@@ -1836,7 +1834,7 @@ export default function App() {
   const selectedStat = stats.find(c => c.id === selectedId);
   const alertCount = stats.filter(c => c.status === "AT RISK").length + stats.filter(c => c.anniversaryDays != null && c.anniversaryDays <= 30).length;
 
-  if (loading) return <div className="min-h-screen bg-gray-50 flex items-center justify-center text-gray-400">Loading...</div>;
+  if (loading) return <div className={`min-h-screen ${darkMode ? "bg-gray-900" : "bg-gray-50"} flex flex-col items-center justify-center gap-3`}><div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" /><span className="text-sm text-gray-400 font-medium tracking-wide">Loading</span></div>;
   if (!data) return null;
 
   const go = (id: string) => { setSelectedId(id); setView("detail"); };
@@ -1893,7 +1891,7 @@ export default function App() {
       // All done, go back to baseline tab
       setBaselineAutoAdvance(false);
       setView("dashboard");
-      setTab("baseline");
+      setTab("overview");
       setSelectedId(null);
       return;
     }
@@ -1910,7 +1908,7 @@ export default function App() {
   };
 
   const handleSaveWow = async (w: Wow) => { await persist({ ...data, wows: [...(data.wows || []), w] }); setView("detail"); };
-  const handleSaveRef = async (r: Referral) => { await persist({ ...data, referrals: [...(data.referrals || []), r] }); setView("dashboard"); setTab("referrals"); };
+  const handleSaveRef = async (r: Referral) => { await persist({ ...data, referrals: [...(data.referrals || []), r] }); setView("dashboard"); setTab("overview"); };
 
   const handleAddNPSFeedback = async (fb: NPSFeedback) => {
     const updated = [...(data.npsFeedback || []), fb];
@@ -2018,7 +2016,6 @@ export default function App() {
               {DEFAULT_USERS.map(u => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)}
             </select>
             <button onClick={toggleDarkMode} className={`text-base sm:text-lg ${darkMode ? "text-gray-300 hover:text-white" : "text-gray-600 hover:text-gray-900"}`} title={darkMode ? "Light mode" : "Dark mode"}>{darkMode ? "\u2600\uFE0F" : "\uD83C\uDF19"}</button>
-            <button onClick={handleReset} className={`text-xs hidden sm:inline ${darkMode ? "text-gray-400 hover:text-red-400" : "text-gray-400 hover:text-red-500"}`} title="Reset">{"\u21BB"}</button>
           </div>
         </div>
       </div>
@@ -2048,11 +2045,11 @@ export default function App() {
         const freq = SCORING_FREQUENCY[selected.tier];
         if (freq === "quarterly") return quarterFromMonth(s.month) === quarterFromMonth(new Date().getMonth());
         return s.month === new Date().getMonth();
-      })} onSave={handleSaveScore} onCancel={() => { setBaselineAutoAdvance(false); if (selectedId) setView("detail"); else { setView("dashboard"); setTab("baseline"); } }} darkMode={darkMode} settings={data.settings} wows={data.wows || []} />}
+      })} onSave={handleSaveScore} onCancel={() => { setBaselineAutoAdvance(false); if (selectedId) setView("detail"); else { setView("dashboard"); setTab("overview"); } }} darkMode={darkMode} settings={data.settings} wows={data.wows || []} />}
       {view === "addClient" && <ClientForm onSave={handleSaveClient} onCancel={back} referralSources={getReferralSources(data.settings)} darkMode={darkMode} settings={data.settings} />}
       {view === "editClient" && selected && <ClientForm client={selected} onSave={handleSaveClient} onCancel={() => setView("detail")} referralSources={getReferralSources(data.settings)} darkMode={darkMode} settings={data.settings} />}
       {view === "addWow" && selected && <WowForm clientId={selectedId!} onSave={handleSaveWow} onCancel={() => setView("detail")} darkMode={darkMode} />}
-      {view === "addRef" && <ReferralForm clients={data.clients} onSave={handleSaveRef} onCancel={() => { setView("dashboard"); setTab("referrals"); }} referralSources={getReferralSources(data.settings)} darkMode={darkMode} />}
+      {view === "addRef" && <ReferralForm clients={data.clients} onSave={handleSaveRef} onCancel={() => { setView("dashboard"); setTab("overview"); }} referralSources={getReferralSources(data.settings)} darkMode={darkMode} />}
     </div>
   </div>;
 }
