@@ -89,7 +89,7 @@ async function getSlackChannelMessages(channelId: string, _sinceTs?: number): Pr
       .sort((a, b) => Number(a.ts) - Number(b.ts))
       .map(m => ({
         author: slackUserCache[m.user || ''] || m.user || 'Unknown',
-        text: (m.text || '').slice(0, 500),
+        text: (m.text || '').slice(0, 1000),
         ts: new Date(Number(m.ts) * 1000).toISOString(),
       }));
   } catch { return []; }
@@ -118,19 +118,19 @@ LAST CHECK-IN: ${lastCheckinDate ? new Date(lastCheckinDate).toLocaleDateString(
 TODAY: ${new Date().toLocaleDateString()}
 
 --- RECENTLY COMPLETED TASKS (${completedTasks.length}) ---
-${completedTasks.length === 0 ? 'None' : completedTasks.map((t: any) => `- ${t.name} — completed by ${t.completedBy || 'team'} on ${new Date(t.completedAt).toLocaleDateString()}${t.description ? '\n  Context: ' + t.description.slice(0, 200) : ''}`).join('\n')}
+${completedTasks.length === 0 ? 'None' : completedTasks.map((t: any) => `- ${t.name} — completed by ${t.completedBy || 'team'} on ${new Date(t.completedAt).toLocaleDateString()}${t.description ? '\n  Context: ' + t.description.slice(0, 500) : ''}`).join('\n')}
 
 --- OPEN TASKS / CURRENT PRIORITIES (${currentPriorities.length}) ---
-${currentPriorities.length === 0 ? 'None' : currentPriorities.map((t: any) => `- ${t.name} — assigned to ${t.assignedTo || 'unassigned'}${t.dueDate ? ', due ' + new Date(t.dueDate).toLocaleDateString() : ''}${t.description ? '\n  Context: ' + t.description.slice(0, 200) : ''}`).join('\n')}
+${currentPriorities.length === 0 ? 'None' : currentPriorities.map((t: any) => `- ${t.name} — assigned to ${t.assignedTo || 'unassigned'}${t.dueDate ? ', due ' + new Date(t.dueDate).toLocaleDateString() : ''}${t.description ? '\n  Context: ' + t.description.slice(0, 500) : ''}`).join('\n')}
 
 --- OVERDUE ITEMS (${outstandingItems.length}) ---
-${outstandingItems.length === 0 ? 'None' : outstandingItems.map((t: any) => `- ${t.name} — assigned to ${t.assignedTo || 'unassigned'}, was due ${new Date(t.dueDate!).toLocaleDateString()}${t.description ? '\n  Context: ' + t.description.slice(0, 200) : ''}`).join('\n')}
+${outstandingItems.length === 0 ? 'None' : outstandingItems.map((t: any) => `- ${t.name} — assigned to ${t.assignedTo || 'unassigned'}, was due ${new Date(t.dueDate!).toLocaleDateString()}${t.description ? '\n  Context: ' + t.description.slice(0, 500) : ''}`).join('\n')}
 
 --- MEETINGS & EVENTS (${emailThreads.filter(e => e.subject !== 'Note').length}) ---
-${emailThreads.filter(e => e.subject !== 'Note').length === 0 ? 'None' : emailThreads.filter(e => e.subject !== 'Note').map(e => `- ${e.subject} (${new Date(e.date).toLocaleDateString()})${e.snippet ? ': ' + e.snippet.slice(0, 150) : ''}`).join('\n')}
+${emailThreads.filter(e => e.subject !== 'Note').length === 0 ? 'None' : emailThreads.filter(e => e.subject !== 'Note').map(e => `- ${e.subject} (${new Date(e.date).toLocaleDateString()})${e.snippet ? ': ' + e.snippet.slice(0, 500) : ''}`).join('\n')}
 
 --- CRM NOTES (${emailThreads.filter(e => e.subject === 'Note').length}) ---
-${emailThreads.filter(e => e.subject === 'Note').length === 0 ? 'None' : emailThreads.filter(e => e.subject === 'Note').map(e => `- ${new Date(e.date).toLocaleDateString()}: ${e.snippet.slice(0, 200)}`).join('\n')}
+${emailThreads.filter(e => e.subject === 'Note').length === 0 ? 'None' : emailThreads.filter(e => e.subject === 'Note').map(e => `- ${new Date(e.date).toLocaleDateString()}: ${e.snippet.slice(0, 1000)}`).join('\n')}
 
 --- SLACK CHANNEL ACTIVITY (${slackMessages.length}) ---
 ${slackMessages.length === 0 ? 'No Slack channel connected' : slackMessages.map(m => `- ${m.author} (${new Date(m.ts).toLocaleDateString()}): ${m.text}`).join('\n')}
@@ -138,7 +138,7 @@ ${slackMessages.length === 0 ? 'No Slack channel connected' : slackMessages.map(
 
   const message = await anthropic.messages.create({
     model: 'claude-sonnet-4-20250514',
-    max_tokens: 1200,
+    max_tokens: 2000,
     messages: [{
       role: 'user',
       content: `You are an executive assistant to a lead financial advisor at a fractional family office. Based on the following client data, write a concise executive briefing for the advisor before their next check-in with this client.
@@ -217,7 +217,6 @@ export async function POST(request: Request) {
         if (!a.due_date) return 1; if (!b.due_date) return -1;
         return new Date(a.due_date).getTime() - new Date(b.due_date).getTime();
       })
-      .slice(0, 20)
       .map((t: any) => ({
         name: t.name,
         dueDate: t.due_date,
@@ -248,10 +247,10 @@ export async function POST(request: Request) {
         .map(n => ({
           subject: 'Note',
           from: 'Team',
-          snippet: n.content.slice(0, 300),
+          snippet: n.content.slice(0, 1000),
           date: n.created_at,
         })),
-    ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 20);
+    ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
     // Generate AI narrative summary
     const narrative = await generateNarrative(

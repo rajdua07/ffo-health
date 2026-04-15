@@ -27,7 +27,7 @@ async function getSlackMessages(channelId: string): Promise<Array<{ author: stri
       .filter((m: any) => !m.subtype)
       .map((m: any) => ({
         author: m.user || 'Unknown',
-        text: (m.text || '').slice(0, 300),
+        text: (m.text || '').slice(0, 1000),
         ts: new Date(Number(m.ts) * 1000).toISOString(),
       }));
   } catch { return []; }
@@ -205,25 +205,25 @@ export async function POST(request: Request) {
     const notes = allNotes.filter((n: any) => inPeriod(n.created_at));
     const slackMessages = allSlackMessages.filter(m => inPeriod(m.ts));
 
-    // Build data context
-    const completedList = completedTasks.slice(0, 30).map((t: any) =>
-      `- ${t.name} — completed by ${resolveUserName(t.completer)} on ${new Date(t.due_date || t.updated_at || t.created_at || '').toLocaleDateString()}${t.description ? '\n  ' + t.description.slice(0, 200) : ''}`
+    // Build data context — generous limits since Claude has 200K context
+    const completedList = completedTasks.map((t: any) =>
+      `- ${t.name} — completed by ${resolveUserName(t.completer)} on ${new Date(t.due_date || t.updated_at || t.created_at || '').toLocaleDateString()}${t.description ? '\n  ' + t.description.slice(0, 500) : ''}`
     ).join('\n') || 'None';
 
     const openList = openTasks.map((t: any) =>
-      `- ${t.name} — assigned to ${resolveUserName(t.assigned_to)}${t.due_date ? ', due ' + new Date(t.due_date).toLocaleDateString() : ''}${t.description ? '\n  ' + t.description.slice(0, 200) : ''}`
+      `- ${t.name} — assigned to ${resolveUserName(t.assigned_to)}${t.due_date ? ', due ' + new Date(t.due_date).toLocaleDateString() : ''}${t.description ? '\n  ' + t.description.slice(0, 500) : ''}`
     ).join('\n') || 'None';
 
-    const eventsList = events.slice(0, 15).map((e: any) =>
-      `- ${e.title} (${e.starts_at ? new Date(e.starts_at).toLocaleDateString() : 'no date'})${e.description ? ': ' + e.description.slice(0, 150) : ''}`
+    const eventsList = events.map((e: any) =>
+      `- ${e.title} (${e.starts_at ? new Date(e.starts_at).toLocaleDateString() : 'no date'})${e.description ? ': ' + e.description.slice(0, 500) : ''}`
     ).join('\n') || 'None';
 
-    const notesList = notes.slice(0, 15).map((n: any) =>
-      `- ${new Date(n.created_at).toLocaleDateString()}: ${n.content.slice(0, 200)}`
+    const notesList = notes.map((n: any) =>
+      `- ${new Date(n.created_at).toLocaleDateString()}: ${n.content.slice(0, 1000)}`
     ).join('\n') || 'None';
 
     // Include full timestamps in Slack messages for response time analysis
-    const slackList = slackMessages.slice(0, 30).map(m =>
+    const slackList = slackMessages.map(m =>
       `- ${m.author} (${new Date(m.ts).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}): ${m.text}`
     ).join('\n') || 'No Slack data';
 

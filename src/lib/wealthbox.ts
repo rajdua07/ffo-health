@@ -217,7 +217,7 @@ export async function getNotesForContact(contactId: string): Promise<Array<{
     );
     return (data.status_updates || data.notes || []).map((n: any) => ({
       id: n.id,
-      content: (n.content || '').replace(/<[^>]*>/g, '').slice(0, 500),
+      content: (n.content || '').replace(/<[^>]*>/g, '').slice(0, 2000),
       created_at: n.created_at,
     }));
   } catch {
