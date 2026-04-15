@@ -8,7 +8,7 @@ import {
   filterByAdvisor, getReferralSources,
   syncFromWealthbox, pushScoreToWealthbox, testWealthboxConnection,
   importNewClientsFromWealthbox, enrichClientsWithTasks, fetchExecSummary, fetchAIScore,
-  generateNPSSurveyLink, parseCSVClients,
+  generateNPSSurveyLink, fetchPendingNPSSurveys, parseCSVClients,
   npsCategory, npsColor, latestNPSForClient, getPods, getPodForClient,
   getThresholds, getEffectiveWeights,
   METRICS, METRIC_COUNT, DIMENSIONS, DIM_WEIGHTS, MO, TIERS, ADVISORS, WOW_TYPES,
@@ -928,10 +928,12 @@ function ActivityTab({ clients, scores, wows, darkMode, settings }: { clients: C
 }
 
 // ===== NPS / FEEDBACK TAB =====
-function NPSTab({ stats, npsFeedback, onAddFeedback, darkMode }: {
-  stats: ClientStat[]; npsFeedback: NPSFeedback[]; onAddFeedback: (fb: NPSFeedback) => void; darkMode?: boolean;
+function NPSTab({ stats, npsFeedback, onAddFeedback, onImportSurveys, darkMode }: {
+  stats: ClientStat[]; npsFeedback: NPSFeedback[]; onAddFeedback: (fb: NPSFeedback) => void; onImportSurveys: () => Promise<number>; darkMode?: boolean;
 }) {
   const [showForm, setShowForm] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importMsg, setImportMsg] = useState("");
   const [fbClientId, setFbClientId] = useState("");
   const [fbScore, setFbScore] = useState(8);
   const [fbComment, setFbComment] = useState("");
@@ -988,7 +990,13 @@ function NPSTab({ stats, npsFeedback, onAddFeedback, darkMode }: {
 
     {/* Send NPS Survey */}
     <div className={`rounded-xl border p-4 sm:p-5 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
-      <h3 className={`text-sm font-semibold mb-3 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>SEND NPS SURVEY</h3>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className={`text-sm font-semibold ${darkMode ? "text-gray-400" : "text-gray-500"}`}>NPS SURVEYS</h3>
+        <button onClick={async () => { setImporting(true); setImportMsg(""); const count = await onImportSurveys(); setImportMsg(count > 0 ? `Imported ${count} response${count > 1 ? "s" : ""}!` : "No new responses"); setImporting(false); setTimeout(() => setImportMsg(""), 3000); }} disabled={importing} className={`text-xs px-2.5 py-1 rounded-lg flex items-center gap-1 ${importing ? "opacity-50" : ""} ${darkMode ? "text-gray-400 hover:text-blue-400 hover:bg-slate-700" : "text-gray-500 hover:text-blue-600 hover:bg-gray-100"}`}>
+          <span className={importing ? "animate-spin inline-block" : ""}>{"\u21BB"}</span> Check for Responses
+        </button>
+      </div>
+      {importMsg && <div className={`text-xs mb-3 px-3 py-1.5 rounded-lg ${importMsg.includes("Imported") ? "bg-green-100 text-green-700" : (darkMode ? "bg-slate-700 text-gray-400" : "bg-gray-100 text-gray-500")}`}>{importMsg}</div>}
       <p className={`text-xs mb-3 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Generate a unique survey link for a client. They can fill it out and it feeds directly into their profile.</p>
       <div className="flex items-end gap-2">
         <div className="flex-1"><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Client</label>
@@ -1774,7 +1782,22 @@ export default function App() {
   const [baselineAutoAdvance, setBaselineAutoAdvance] = useState(false);
 
   useEffect(() => {
-    loadData().then(d => { setData(d); setLoading(false); });
+    loadData().then(d => {
+      setData(d);
+      setLoading(false);
+      // Auto-import any pending NPS survey responses
+      fetchPendingNPSSurveys().then(pending => {
+        if (pending.length > 0) {
+          const existing = new Set((d.npsFeedback || []).map(f => f.id));
+          const newFeedback = pending.filter(f => !existing.has(f.id));
+          if (newFeedback.length > 0) {
+            const updated = { ...d, npsFeedback: [...(d.npsFeedback || []), ...newFeedback] };
+            setData(updated);
+            saveData(updated);
+          }
+        }
+      });
+    });
     const savedTheme = localStorage.getItem("ffo-theme");
     if (savedTheme === "dark") setDarkMode(true);
   }, []);
@@ -1872,6 +1895,17 @@ export default function App() {
   const handleAddNPSFeedback = async (fb: NPSFeedback) => {
     const updated = [...(data.npsFeedback || []), fb];
     await persist({ ...data, npsFeedback: updated });
+  };
+
+  const handleImportNPSSurveys = async (): Promise<number> => {
+    const pending = await fetchPendingNPSSurveys();
+    if (pending.length === 0) return 0;
+    const existing = new Set((data.npsFeedback || []).map(f => f.id));
+    const newFeedback = pending.filter(f => !existing.has(f.id));
+    if (newFeedback.length > 0) {
+      await persist({ ...data, npsFeedback: [...(data.npsFeedback || []), ...newFeedback] });
+    }
+    return newFeedback.length;
   };
 
   const handleExportClientPDF = () => {
@@ -1984,7 +2018,7 @@ export default function App() {
         {tab === "revenue" && <RevenueTab stats={stats} darkMode={darkMode} settings={data.settings} />}
         {tab === "referrals" && <ReferralsTab stats={stats} referrals={data.referrals || []} onAddRef={() => setView("addRef")} referralSources={getReferralSources(data.settings)} darkMode={darkMode} />}
         {tab === "activity" && <ActivityTab clients={visibleClients} scores={data.scores || []} wows={data.wows || []} darkMode={darkMode} settings={data.settings} />}
-        {tab === "nps" && <NPSTab stats={stats} npsFeedback={data.npsFeedback || []} onAddFeedback={handleAddNPSFeedback} darkMode={darkMode} />}
+        {tab === "nps" && <NPSTab stats={stats} npsFeedback={data.npsFeedback || []} onAddFeedback={handleAddNPSFeedback} onImportSurveys={handleImportNPSSurveys} darkMode={darkMode} />}
         {tab === "settings" && <SettingsTab settings={data.settings || { referralSources: REFERRAL_SOURCES }} onSave={handleSaveSettings} onSync={handleWealthboxSync} onImport={handleWealthboxImport} onCSVImport={handleCSVImport} darkMode={darkMode} currentUser={currentUser} />}
       </>}
 

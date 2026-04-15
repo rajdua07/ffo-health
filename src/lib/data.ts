@@ -549,6 +549,33 @@ export function generateNPSSurveyLink(clientId: string, clientName: string): str
   return `${baseUrl}/survey?t=${token}`;
 }
 
+export async function fetchPendingNPSSurveys(): Promise<NPSFeedback[]> {
+  if (typeof window === "undefined") return [];
+  try {
+    const resp = await fetch('/api/nps-survey?action=pending');
+    const data = await resp.json();
+    if (!data.success || !data.responses?.length) return [];
+
+    const feedbacks: NPSFeedback[] = data.responses.map((r: any) => ({
+      id: r.id,
+      clientId: r.clientId,
+      npsScore: r.npsScore,
+      comment: r.comment || '',
+      source: 'Survey',
+      assessor: 'Client',
+      ts: r.submittedAt,
+    }));
+
+    // Claim the responses so they don't get imported again
+    await fetch('/api/nps-survey?action=claim');
+
+    return feedbacks;
+  } catch (err) {
+    console.error('Failed to fetch pending NPS surveys:', err);
+    return [];
+  }
+}
+
 export async function fetchExecSummary(
   clientId: string, wealthboxId: string | undefined, lastScoredTs: string | null,
   slackChannelId?: string, clientName?: string,
