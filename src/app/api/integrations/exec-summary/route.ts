@@ -197,15 +197,14 @@ export async function POST(request: Request) {
       getSlackChannelMessages(slackChannelId || ''),
     ]);
 
-    // Process ALL completed tasks — don't filter by last check-in date
-    // The Wealthbox API already returns them sorted most-recent-first via resource_id
+    // Process ALL completed tasks — Wealthbox has no completed_at field,
+    // so use updated_at as the completion date for completed tasks
     const achievementsSinceLastCheckin = completedTasksRaw
-      .filter((t: any) => t.completed_at)
-      .sort((a: any, b: any) => new Date(b.completed_at).getTime() - new Date(a.completed_at).getTime())
+      .sort((a: any, b: any) => new Date(b.updated_at || '').getTime() - new Date(a.updated_at || '').getTime())
       .slice(0, 30)
       .map((t: any) => ({
         name: t.name,
-        completedAt: t.completed_at!,
+        completedAt: t.updated_at || t.created_at,
         description: t.description,
         completedBy: resolveUserName(t.completer),
         assignedTo: resolveUserName(t.assigned_to),
