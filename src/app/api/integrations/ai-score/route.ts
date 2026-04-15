@@ -196,9 +196,45 @@ export async function POST(request: Request) {
       `- ${new Date(n.created_at).toLocaleDateString()}: ${n.content.slice(0, 200)}`
     ).join('\n') || 'None';
 
+    // Include full timestamps in Slack messages for response time analysis
     const slackList = slackMessages.slice(0, 30).map(m =>
-      `- ${m.author} (${new Date(m.ts).toLocaleDateString()}): ${m.text}`
+      `- ${m.author} (${new Date(m.ts).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}): ${m.text}`
     ).join('\n') || 'No Slack data';
+
+    // Pre-calculate response time stats from Slack messages
+    let responseTimeAnalysis = 'No Slack data available for response time analysis.';
+    if (slackMessages.length >= 2) {
+      const sorted = [...slackMessages].sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
+      const responseTimes: number[] = [];
+      for (let i = 1; i < sorted.length; i++) {
+        const prev = sorted[i - 1];
+        const curr = sorted[i];
+        // Only measure when different people are responding to each other
+        if (prev.author !== curr.author) {
+          const prevTime = new Date(prev.ts);
+          const currTime = new Date(curr.ts);
+          // Calculate business hours between messages (Mon-Fri, 9am-6pm)
+          let bizHours = 0;
+          const cursor = new Date(prevTime);
+          while (cursor < currTime) {
+            const day = cursor.getDay();
+            const hour = cursor.getHours();
+            if (day >= 1 && day <= 5 && hour >= 9 && hour < 18) {
+              bizHours++;
+            }
+            cursor.setHours(cursor.getHours() + 1);
+            if (bizHours > 200) break; // safety cap
+          }
+          responseTimes.push(bizHours);
+        }
+      }
+      if (responseTimes.length > 0) {
+        const avg = responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length;
+        const min = Math.min(...responseTimes);
+        const max = Math.max(...responseTimes);
+        responseTimeAnalysis = `Based on ${responseTimes.length} message exchanges: avg response time ~${avg.toFixed(0)} business hours, fastest: ${min}h, slowest: ${max}h. (Business hours = Mon-Fri 9am-6pm)`;
+      }
+    }
 
     const transcriptList = transcripts.map(t =>
       `--- ${t.name} (${new Date(t.date).toLocaleDateString()}) ---\n${t.content}`
@@ -238,6 +274,9 @@ ${notesList}
 
 ### Slack Channel Activity (${slackMessages.length} messages)
 ${slackList}
+
+### Response Time Analysis (calculated from Slack timestamps, business hours Mon-Fri 9am-6pm)
+${responseTimeAnalysis}
 
 ### Recent Call Transcripts (${transcripts.length})
 ${transcriptList}
