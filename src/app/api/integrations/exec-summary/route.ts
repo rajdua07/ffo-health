@@ -197,14 +197,13 @@ export async function POST(request: Request) {
       getSlackChannelMessages(slackChannelId || ''),
     ]);
 
-    // Process ALL completed tasks — Wealthbox has no completed_at field,
-    // so use updated_at as the completion date for completed tasks
+    // Process ALL completed tasks — use due_date as the primary date
     const achievementsSinceLastCheckin = completedTasksRaw
-      .sort((a: any, b: any) => new Date(b.updated_at || '').getTime() - new Date(a.updated_at || '').getTime())
+      .sort((a: any, b: any) => new Date(b.due_date || b.updated_at || '').getTime() - new Date(a.due_date || a.updated_at || '').getTime())
       .slice(0, 30)
       .map((t: any) => ({
         name: t.name,
-        completedAt: t.updated_at || t.created_at,
+        completedAt: t.due_date || t.updated_at || t.created_at,
         description: t.description,
         completedBy: resolveUserName(t.completer),
         assignedTo: resolveUserName(t.assigned_to),

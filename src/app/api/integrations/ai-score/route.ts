@@ -138,7 +138,7 @@ export async function POST(request: Request) {
 
     // Build data context
     const completedList = completedTasks.slice(0, 30).map((t: any) =>
-      `- ${t.name} — completed by ${resolveUserName(t.completer)} on ${new Date(t.updated_at || t.completed_at || t.created_at || '').toLocaleDateString()}${t.description ? '\n  ' + t.description.slice(0, 200) : ''}`
+      `- ${t.name} — completed by ${resolveUserName(t.completer)} on ${new Date(t.due_date || t.updated_at || t.created_at || '').toLocaleDateString()}${t.description ? '\n  ' + t.description.slice(0, 200) : ''}`
     ).join('\n') || 'None';
 
     const openList = openTasks.map((t: any) =>
