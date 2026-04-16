@@ -196,6 +196,7 @@ const TABS = [
   { id: "pods", label: "Pods" }, { id: "team", label: "Team" },
   { id: "compliance", label: "Compliance" },
   { id: "alerts", label: "Alerts" }, { id: "revenue", label: "Revenue" },
+  { id: "activity", label: "Activity" },
   { id: "nps", label: "NPS" },
   { id: "settings", label: "Settings" },
 ];
@@ -981,40 +982,122 @@ function ReferralsTab({ stats, referrals, onAddRef, referralSources, darkMode }:
 }
 
 // ===== ACTIVITY =====
-function ActivityTab({ clients, scores, wows, darkMode, settings }: { clients: Client[]; scores: Score[]; wows: Wow[]; darkMode?: boolean; settings?: Settings }) {
+function ActivityTab({ clients, scores, wows, npsFeedback, currentUser, darkMode, settings }: { clients: Client[]; scores: Score[]; wows: Wow[]; npsFeedback: NPSFeedback[]; currentUser?: UserProfile; darkMode?: boolean; settings?: Settings }) {
+  const [filterMine, setFilterMine] = useState(false);
+
   const events = useMemo(() => {
-    const items: Array<{ type: string; ts: string; client: string; assessor?: string; score?: number | null; status?: string | null; month?: string; notes?: string; owner?: string; description?: string; wowType?: string }> = [];
-    (scores || []).forEach(s => { const c = (clients || []).find(x => x.id === s.clientId); items.push({ type: "score", ts: s.ts || `${s.year}-01-15T12:00:00Z`, client: c?.name || "?", assessor: s.assessor, score: calcScore(s.scores), status: getStatus(calcScore(s.scores), settings), month: `${MO[s.month]} ${s.year}`, notes: s.notes }); });
-    (wows || []).forEach(w => { const c = (clients || []).find(x => x.id === w.clientId); items.push({ type: "wow", ts: w.date + "T12:00:00Z", client: c?.name || "?", owner: w.owner, description: w.description, wowType: w.type }); });
+    const items: Array<{ type: string; ts: string; client: string; actor?: string; score?: number | null; status?: string | null; period?: string; notes?: string; description?: string; wowType?: string; npsScore?: number; npsCategory?: string; comment?: string; source?: string }> = [];
+
+    (scores || []).forEach(s => {
+      const c = (clients || []).find(x => x.id === s.clientId);
+      items.push({
+        type: "score",
+        ts: s.ts || `${s.year}-01-15T12:00:00Z`,
+        client: c?.name || "?",
+        actor: s.assessor,
+        score: calcScore(s.scores),
+        status: getStatus(calcScore(s.scores), settings),
+        period: `${MO[s.month]} ${s.year}`,
+        notes: s.notes,
+      });
+    });
+
+    (wows || []).forEach(w => {
+      const c = (clients || []).find(x => x.id === w.clientId);
+      items.push({
+        type: "wow",
+        ts: w.date + "T12:00:00Z",
+        client: c?.name || "?",
+        actor: w.owner,
+        description: w.description,
+        wowType: w.type,
+      });
+    });
+
+    (npsFeedback || []).forEach(f => {
+      const c = (clients || []).find(x => x.id === f.clientId);
+      items.push({
+        type: "nps",
+        ts: f.ts,
+        client: c?.name || "?",
+        actor: f.assessor,
+        npsScore: f.npsScore,
+        npsCategory: npsCategory(f.npsScore),
+        comment: f.comment,
+        source: f.source,
+      });
+    });
+
     return items.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
-  }, [clients, scores, wows, settings]);
+  }, [clients, scores, wows, npsFeedback, settings]);
+
+  const actorMatches = (actor?: string) => {
+    if (!currentUser) return true;
+    if (!actor) return false;
+    const name = (currentUser.advisorName || currentUser.name || "").toLowerCase();
+    const simpleName = name.replace(/\s*\(.*\)\s*/g, "").trim();
+    return actor.toLowerCase() === simpleName || actor.toLowerCase() === name;
+  };
+
+  const filteredEvents = filterMine ? events.filter(e => actorMatches(e.actor)) : events;
+
+  const iconForEvent = (e: typeof events[number]) => {
+    if (e.type === "score") return <ScoreCircle score={e.score ?? null} size={32} />;
+    if (e.type === "wow") return <div className={`w-8 h-8 rounded-full ${darkMode ? "bg-amber-700" : "bg-amber-200"} flex items-center justify-center text-sm`}>{"\u2B50"}</div>;
+    // NPS
+    const cat = e.npsCategory;
+    const bg = cat === "Promoter" ? (darkMode ? "bg-green-700" : "bg-green-200") : cat === "Passive" ? (darkMode ? "bg-amber-700" : "bg-amber-200") : (darkMode ? "bg-red-800" : "bg-red-200");
+    const txt = cat === "Promoter" ? (darkMode ? "text-green-100" : "text-green-800") : cat === "Passive" ? (darkMode ? "text-amber-100" : "text-amber-800") : (darkMode ? "text-red-100" : "text-red-800");
+    return <div className={`w-8 h-8 rounded-full ${bg} flex items-center justify-center text-xs font-bold ${txt}`}>{e.npsScore}</div>;
+  };
+
+  const rowBg = (e: typeof events[number]) => {
+    if (e.type === "wow") return darkMode ? "border-amber-900 bg-amber-950" : "border-amber-100 bg-amber-50";
+    if (e.type === "nps") {
+      const cat = e.npsCategory;
+      if (cat === "Promoter") return darkMode ? "border-green-900 bg-green-950" : "border-green-100 bg-green-50";
+      if (cat === "Detractor") return darkMode ? "border-red-900 bg-red-950" : "border-red-100 bg-red-50";
+      return darkMode ? "border-slate-600 bg-slate-700" : "border-gray-100";
+    }
+    if (e.status === "AT RISK") return darkMode ? "border-red-900 bg-red-950" : "border-red-100 bg-red-50";
+    return darkMode ? "border-slate-600 bg-slate-700" : "border-gray-100";
+  };
 
   return <div className={`rounded-xl border p-4 sm:p-5 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
-    <h3 className={`text-sm font-semibold mb-4 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>ACTIVITY FEED</h3>
+    <div className="flex items-center justify-between mb-4">
+      <h3 className={`text-sm font-semibold ${darkMode ? "text-gray-400" : "text-gray-500"}`}>ACTIVITY FEED</h3>
+      {currentUser && <label className={`flex items-center gap-2 text-xs cursor-pointer ${darkMode ? "text-gray-400" : "text-gray-500"}`}>
+        <input type="checkbox" checked={filterMine} onChange={e => setFilterMine(e.target.checked)} className="accent-blue-600" />
+        My activity only
+      </label>}
+    </div>
     <div className="space-y-3">
-      {events.map((e, i) => (
-        <div key={i} className={`flex gap-3 p-3 rounded-lg border ${
-          e.type === "wow"
-            ? (darkMode ? "border-amber-900 bg-amber-950" : "border-amber-100 bg-amber-50")
-            : e.status === "AT RISK"
-            ? (darkMode ? "border-red-900 bg-red-950" : "border-red-100 bg-red-50")
-            : (darkMode ? "border-slate-600 bg-slate-700" : "border-gray-100")
-        }`}>
-          <div className="shrink-0">{e.type === "score" ? <ScoreCircle score={e.score ?? null} size={32} /> : <div className={`w-8 h-8 rounded-full ${darkMode ? "bg-amber-700" : "bg-amber-200"} flex items-center justify-center`}>{"⭐"}</div>}</div>
+      {filteredEvents.map((e, i) => (
+        <div key={i} className={`flex gap-3 p-3 rounded-lg border ${rowBg(e)}`}>
+          <div className="shrink-0">{iconForEvent(e)}</div>
           <div className="flex-1 min-w-0">
-            {e.type === "score" ? <>
-              <div className={`text-sm ${darkMode ? "text-gray-200" : ""}`}><span className="font-semibold">{e.assessor}</span> scored <span className="font-semibold">{e.client}</span> {"\u2014"} {e.month}</div>
+            {e.type === "score" && <>
+              <div className={`text-sm ${darkMode ? "text-gray-200" : ""}`}><span className="font-semibold">{e.actor}</span> scored <span className="font-semibold">{e.client}</span> {"\u2014"} {e.period}</div>
               <div className="flex items-center gap-2 mt-1"><span className={`text-sm font-bold ${darkMode ? "text-white" : ""}`} style={{ color: darkMode ? "#ffffff" : sColor(e.status ?? null).tx }}>{e.score?.toFixed(1)}</span><Badge status={e.status ?? null} sm /></div>
               {e.notes && <p className={`text-xs mt-1 ${darkMode ? "text-gray-400" : "text-gray-600"}`}>{e.notes}</p>}
-            </> : <>
-              <div className={`text-sm ${darkMode ? "text-gray-200" : ""}`}><span className="font-semibold">{e.owner}</span> wow {"\u2192"} <span className="font-semibold">{e.client}</span></div>
+            </>}
+            {e.type === "wow" && <>
+              <div className={`text-sm ${darkMode ? "text-gray-200" : ""}`}><span className="font-semibold">{e.actor}</span> delivered a wow {"\u2192"} <span className="font-semibold">{e.client}</span>{e.wowType ? <span className={`ml-2 text-xs px-2 py-0.5 rounded-full ${darkMode ? "bg-amber-800 text-amber-100" : "bg-amber-100 text-amber-700"}`}>{e.wowType}</span> : null}</div>
               <p className={`text-xs mt-1 ${darkMode ? "text-gray-300" : "text-gray-700"}`}>{e.description}</p>
+            </>}
+            {e.type === "nps" && <>
+              <div className={`text-sm ${darkMode ? "text-gray-200" : ""}`}>
+                <span className="font-semibold">{e.client}</span> logged NPS <span className="font-semibold">{e.npsScore}</span>{" "}
+                <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${e.npsCategory === "Promoter" ? "bg-green-100 text-green-700" : e.npsCategory === "Passive" ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"}`}>{e.npsCategory}</span>
+              </div>
+              <div className={`text-[11px] mt-1 ${darkMode ? "text-gray-500" : "text-gray-500"}`}>via {e.source}{e.actor ? ` \u00B7 logged by ${e.actor}` : ""}</div>
+              {e.comment && <p className={`text-xs mt-1 italic ${darkMode ? "text-gray-300" : "text-gray-600"}`}>&ldquo;{e.comment}&rdquo;</p>}
             </>}
           </div>
           <div className={`text-[10px] shrink-0 ${darkMode ? "text-gray-500" : "text-gray-400"}`}>{timeAgo(e.ts)}</div>
         </div>
       ))}
-      {events.length === 0 && <p className="text-sm text-gray-400 text-center py-4">No activity yet.</p>}
+      {filteredEvents.length === 0 && <p className="text-sm text-gray-400 text-center py-4">{filterMine ? "No activity by you yet." : "No activity yet."}</p>}
     </div>
   </div>;
 }
@@ -1214,7 +1297,13 @@ function SettingsTab({ settings, onSave, onSync, onImport, onCSVImport, darkMode
   };
 
   const handleSave = () => {
-    onSave({ ...settings, referralSources: sources, wealthboxEnabled: wbEnabled });
+    const existingWeights = settings.scoringConfig?.dimensionWeights || {};
+    const config: ScoringConfig = {
+      atRiskThreshold: scAtRisk,
+      watchThreshold: scWatch,
+      dimensionWeights: existingWeights,
+    };
+    onSave({ ...settings, referralSources: sources, wealthboxEnabled: wbEnabled, scoringConfig: config });
   };
 
   const handleTestConnection = async () => {
@@ -1317,15 +1406,6 @@ function SettingsTab({ settings, onSave, onSync, onImport, onCSVImport, darkMode
     }
   };
 
-  const handleSaveScoringConfig = () => {
-    const existingWeights = settings.scoringConfig?.dimensionWeights || {};
-    const config: ScoringConfig = {
-      atRiskThreshold: scAtRisk,
-      watchThreshold: scWatch,
-      dimensionWeights: existingWeights,
-    };
-    onSave({ ...settings, referralSources: sources, wealthboxEnabled: wbEnabled, scoringConfig: config });
-  };
 
   return <div className={`rounded-xl border p-4 sm:p-5 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
     <h3 className={`text-sm font-semibold mb-4 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>SETTINGS</h3>
@@ -1505,8 +1585,6 @@ function SettingsTab({ settings, onSave, onSync, onImport, onCSVImport, darkMode
               </div>
             ))}
           </div>
-          <button onClick={handleSaveScoringConfig}
-            className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700">Save Thresholds</button>
         </div>
       </div>}
 
@@ -2146,7 +2224,7 @@ export default function App() {
         {tab === "alerts" && <AlertsTab stats={stats} onSelect={go} darkMode={darkMode} />}
         {tab === "revenue" && <RevenueTab stats={stats} darkMode={darkMode} settings={data.settings} />}
         {tab === "referrals" && <ReferralsTab stats={stats} referrals={data.referrals || []} onAddRef={() => setView("addRef")} referralSources={getReferralSources(data.settings)} darkMode={darkMode} />}
-        {tab === "activity" && <ActivityTab clients={visibleClients} scores={data.scores || []} wows={data.wows || []} darkMode={darkMode} settings={data.settings} />}
+        {tab === "activity" && <ActivityTab clients={visibleClients} scores={data.scores || []} wows={data.wows || []} npsFeedback={data.npsFeedback || []} currentUser={currentUser} darkMode={darkMode} settings={data.settings} />}
         {tab === "nps" && <NPSTab stats={stats} npsFeedback={data.npsFeedback || []} onAddFeedback={handleAddNPSFeedback} onImportSurveys={handleImportNPSSurveys} darkMode={darkMode} />}
         {tab === "settings" && <SettingsTab settings={data.settings || { referralSources: REFERRAL_SOURCES }} onSave={handleSaveSettings} onSync={handleWealthboxSync} onImport={handleWealthboxImport} onCSVImport={handleCSVImport} darkMode={darkMode} currentUser={currentUser} />}
       </>}
