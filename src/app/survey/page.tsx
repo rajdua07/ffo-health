@@ -8,7 +8,8 @@ export default function SurveyPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [score, setScore] = useState<number | null>(null);
-  const [comment, setComment] = useState("");
+  const [followUp, setFollowUp] = useState("");
+  const [gap, setGap] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
@@ -39,6 +40,13 @@ export default function SurveyPage() {
   const handleSubmit = async () => {
     if (score == null || !token) return;
     setSubmitting(true);
+
+    // Build the combined comment with both follow-up and gap answers
+    const parts: string[] = [];
+    if (followUp.trim()) parts.push(followUp.trim());
+    if (gap.trim()) parts.push(`[Gap] ${gap.trim()}`);
+    const comment = parts.join("\n\n");
+
     try {
       const resp = await fetch("/api/nps-survey", {
         method: "POST",
@@ -61,7 +69,7 @@ export default function SurveyPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-gray-500">Loading survey...</div>
+        <div className="w-8 h-8 border-2 border-[#1B2A4A] border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
@@ -70,7 +78,6 @@ export default function SurveyPage() {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
         <div className="bg-white rounded-2xl shadow-lg p-8 max-w-md w-full text-center">
-          <div className="text-4xl mb-4">:(</div>
           <p className="text-gray-600">{error}</p>
         </div>
       </div>
@@ -81,14 +88,25 @@ export default function SurveyPage() {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
         <div className="bg-white rounded-2xl shadow-lg p-8 max-w-md w-full text-center">
-          <div className="text-5xl mb-4">Thank you!</div>
-          <p className="text-gray-600 text-lg">Your feedback has been recorded. We truly appreciate you taking the time to share your thoughts with us.</p>
+          <h2 className="text-2xl font-bold text-[#1B2A4A] mb-3">Thank you!</h2>
+          <p className="text-gray-600 text-base">Your feedback has been recorded. We truly appreciate you taking the time to share your thoughts with us.</p>
         </div>
       </div>
     );
   }
 
-  const npsLabels = ["Not at all likely", "", "", "", "", "Neutral", "", "", "", "", "Extremely likely"];
+  // Pick follow-up prompt based on score
+  const followUpPrompt = score == null ? ""
+    : score >= 9 ? "What's the one thing we do best that you'd tell a peer about?"
+    : score >= 7 ? "What would take us from good to great for you?"
+    : "What's the most important thing we could improve?";
+
+  const followUpPlaceholder = score == null ? ""
+    : score >= 9 ? "Our proactive tax planning, the coordination across advisors, a specific team member..."
+    : score >= 7 ? "More proactive communication, faster response times, deeper strategy work..."
+    : "Honest feedback helps us serve you better...";
+
+  const npsLabels = ["Not at all likely", "Extremely likely"];
 
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
@@ -104,9 +122,10 @@ export default function SurveyPage() {
           <p className="text-gray-500 text-sm">Hi {clientName}, we&apos;d love your honest feedback.</p>
         </div>
 
+        {/* Q1: NPS Score */}
         <div className="mb-6">
           <p className="text-sm font-medium text-gray-700 mb-4">
-            On a scale of 0-10, how likely are you to recommend our services to a friend or colleague?
+            How likely are you to recommend Fractional Family Office to a friend or peer?
           </p>
           <div className="grid grid-cols-11 gap-1">
             {Array.from({ length: 11 }, (_, i) => (
@@ -127,22 +146,41 @@ export default function SurveyPage() {
           </div>
           <div className="flex justify-between mt-1">
             <span className="text-[10px] text-gray-400">{npsLabels[0]}</span>
-            <span className="text-[10px] text-gray-400">{npsLabels[10]}</span>
+            <span className="text-[10px] text-gray-400">{npsLabels[1]}</span>
           </div>
         </div>
 
-        <div className="mb-6">
-          <label className="text-sm font-medium text-gray-700 block mb-2">
-            Any additional comments? (optional)
-          </label>
-          <textarea
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            rows={4}
-            value={comment}
-            onChange={e => setComment(e.target.value)}
-            placeholder="Tell us what we're doing well, or how we can improve..."
-          />
-        </div>
+        {/* Q2: Conditional follow-up based on score */}
+        {score !== null && (
+          <div className="mb-6">
+            <label className="text-sm font-medium text-gray-700 block mb-2">
+              {followUpPrompt}
+            </label>
+            <textarea
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              rows={3}
+              value={followUp}
+              onChange={e => setFollowUp(e.target.value)}
+              placeholder={followUpPlaceholder}
+            />
+          </div>
+        )}
+
+        {/* Q3: Gap question — shown after score is picked */}
+        {score !== null && (
+          <div className="mb-6">
+            <label className="text-sm font-medium text-gray-700 block mb-2">
+              Is there anything you wish we were helping with that we&apos;re not?
+            </label>
+            <textarea
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              rows={3}
+              value={gap}
+              onChange={e => setGap(e.target.value)}
+              placeholder="Anything you've been thinking about but haven't raised yet..."
+            />
+          </div>
+        )}
 
         {error && <p className="text-sm text-red-500 mb-4">{error}</p>}
 
