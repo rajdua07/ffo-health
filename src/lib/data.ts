@@ -406,64 +406,134 @@ export const DEFAULT_REFERRALS: Referral[] = [
 ];
 
 // === STORAGE ===
-export async function loadData(): Promise<AppData> {
-  if (typeof window === "undefined") {
-    return { clients: DEFAULT_CLIENTS, scores: DEFAULT_SCORES, wows: DEFAULT_WOWS, referrals: DEFAULT_REFERRALS, npsFeedback: DEFAULT_NPS };
+// Migration: upgrade old data shapes (14-metric scores, missing pods, etc.)
+function migrateData(parsed: any): AppData {
+  if (!parsed.referrals) parsed.referrals = DEFAULT_REFERRALS;
+  if (!parsed.npsFeedback) parsed.npsFeedback = [];
+
+  if (parsed.scores && parsed.scores.length > 0) {
+    parsed.scores = parsed.scores.map((score: Score) => {
+      if (score.scores.length === 11) {
+        const old = score.scores;
+        return { ...score, scores: [old[0], old[2], old[1], old[3], old[3], old[7], old[7], 10 - old[7], old[6], old[6], 10, old[9], old[10], old[8], 5, 5] };
+      }
+      if (score.scores.length === 14) {
+        return { ...score, scores: [...score.scores, 5, 5] };
+      }
+      return score;
+    });
   }
-  try {
-    // Try v7 first, then fall back to v6
-    let raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      raw = localStorage.getItem("ffo-health-v6");
-    }
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (!parsed.referrals) parsed.referrals = DEFAULT_REFERRALS;
-      if (!parsed.npsFeedback) parsed.npsFeedback = [];
 
-      // Migrate scores to 16-metric format
-      if (parsed.scores && parsed.scores.length > 0) {
-        parsed.scores = parsed.scores.map((score: Score) => {
-          if (score.scores.length === 11) {
-            const old = score.scores;
-            return { ...score, scores: [old[0], old[2], old[1], old[3], old[3], old[7], old[7], 10 - old[7], old[6], old[6], 10, old[9], old[10], old[8], 5, 5] };
-          }
-          if (score.scores.length === 14) {
-            // Migrate 14 → 16: add Referral Activity and Network Advocacy with defaults
-            return { ...score, scores: [...score.scores, 5, 5] };
-          }
-          return score;
-        });
+  if (parsed.clients) {
+    parsed.clients = parsed.clients.map((c: Client) => {
+      if (!c.pod) {
+        const pod = DEFAULT_PODS.find(p => p.advisor === c.leadAdvisor || p.advisors?.includes(c.leadAdvisor));
+        return { ...c, pod: pod?.id || "" };
       }
+      return c;
+    });
+  }
+  return parsed;
+}
 
-      // Migrate clients: add pod assignments if missing
-      if (parsed.clients) {
-        parsed.clients = parsed.clients.map((c: Client) => {
-          if (!c.pod) {
-            const pod = DEFAULT_PODS.find(p => p.advisor === c.leadAdvisor || p.advisors?.includes(c.leadAdvisor));
-            return { ...c, pod: pod?.id || "" };
-          }
-          return c;
-        });
-      }
-
-      // Save as v7
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
-      return parsed;
-    }
-  } catch { /* first load */ }
-  const d: AppData = {
+function getDefaults(): AppData {
+  return {
     clients: DEFAULT_CLIENTS, scores: DEFAULT_SCORES, wows: DEFAULT_WOWS,
     referrals: DEFAULT_REFERRALS, npsFeedback: DEFAULT_NPS,
     settings: { referralSources: REFERRAL_SOURCES, pods: DEFAULT_PODS }
   };
+}
+
+export async function loadData(): Promise<AppData> {
+  if (typeof window === "undefined") {
+    return { clients: DEFAULT_CLIENTS, scores: DEFAULT_SCORES, wows: DEFAULT_WOWS, referrals: DEFAULT_REFERRALS, npsFeedback: DEFAULT_NPS };
+  }
+
+  // 1. Try remote storage first (source of truth for multi-device sync)
+  try {
+    const resp = await fetch('/api/app-data', { cache: 'no-store' });
+    const result = await resp.json();
+    if (result.success && result.data) {
+      const migrated = migrateData(result.data);
+      // Mirror to localStorage as a cache for offline/fast reload
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated)); } catch {}
+      return migrated;
+    }
+
+    // 2. Remote is empty but configured — seed from localStorage (if any) then push up
+    if (result.success && !result.data) {
+      let localRaw = localStorage.getItem(STORAGE_KEY) || localStorage.getItem("ffo-health-v6");
+      if (localRaw) {
+        try {
+          const parsed = migrateData(JSON.parse(localRaw));
+          // Push local data to remote as initial seed
+          fetch('/api/app-data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(parsed),
+          }).catch(() => {});
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+          return parsed;
+        } catch { /* fall through */ }
+      }
+      // No local data either — seed defaults to remote
+      const d = getDefaults();
+      fetch('/api/app-data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(d),
+      }).catch(() => {});
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); } catch {}
+      return d;
+    }
+
+    // 3. Remote not configured — fall through to localStorage-only mode
+  } catch {
+    // Network error — fall through to localStorage
+  }
+
+  // Fallback: localStorage-only (dev mode or Upstash not set up)
+  try {
+    let raw = localStorage.getItem(STORAGE_KEY) || localStorage.getItem("ffo-health-v6");
+    if (raw) {
+      const migrated = migrateData(JSON.parse(raw));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
+      return migrated;
+    }
+  } catch { /* first load */ }
+
+  const d = getDefaults();
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); } catch {}
   return d;
 }
 
+// Debounced remote save — writes to localStorage immediately, batches remote writes
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingData: AppData | null = null;
+
+async function flushRemoteSave() {
+  if (!pendingData) return;
+  const toSave = pendingData;
+  pendingData = null;
+  try {
+    await fetch('/api/app-data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(toSave),
+    });
+  } catch (err) {
+    console.error('Failed to persist app data remotely:', err);
+  }
+}
+
 export function saveData(data: AppData): void {
   if (typeof window === "undefined") return;
+  // Immediate local cache write
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch {}
+  // Debounce remote writes (500ms) to avoid hammering the API on rapid edits
+  pendingData = data;
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => { flushRemoteSave(); }, 500);
 }
 
 // === WEALTHBOX SYNC ===
