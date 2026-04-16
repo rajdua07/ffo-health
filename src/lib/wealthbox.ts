@@ -63,14 +63,9 @@ async function wealthboxFetch(endpoint: string, options: RequestInit = {}) {
   return response.json();
 }
 
-// Tag filtering configuration
+// Tag filtering configuration — only import contacts tagged "Planning - FFO"
 const REQUIRED_TAGS = [
-  'Planning - Maintenance',
   'Planning - FFO',
-  'Planning - Private Office',
-  'Investments',
-  'Krop - 2025 Tax Project',
-  'Tax - FFO'
 ];
 
 const EXCLUDED_TAGS = [

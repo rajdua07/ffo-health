@@ -1196,12 +1196,10 @@ function SettingsTab({ settings, onSave, onSync, onImport, onCSVImport, darkMode
   const [csvError, setCsvError] = useState("");
 
   // Scoring config state
-  const existingConfig = settings.scoringConfig;
   const { atRisk: curAtRisk, watch: curWatch } = getThresholds(settings);
-  const curWeights = getEffectiveWeights(settings);
+  const lockedWeights = getEffectiveWeights(settings);
   const [scAtRisk, setScAtRisk] = useState(curAtRisk);
   const [scWatch, setScWatch] = useState(curWatch);
-  const [scWeights, setScWeights] = useState<Record<string, number>>({ ...curWeights });
 
   const addSource = () => {
     if (newSource.trim() && !sources.includes(newSource.trim())) {
@@ -1320,15 +1318,14 @@ function SettingsTab({ settings, onSave, onSync, onImport, onCSVImport, darkMode
   };
 
   const handleSaveScoringConfig = () => {
+    const existingWeights = settings.scoringConfig?.dimensionWeights || {};
     const config: ScoringConfig = {
       atRiskThreshold: scAtRisk,
       watchThreshold: scWatch,
-      dimensionWeights: { ...scWeights },
+      dimensionWeights: existingWeights,
     };
     onSave({ ...settings, referralSources: sources, wealthboxEnabled: wbEnabled, scoringConfig: config });
   };
-
-  const weightsSum = Object.values(scWeights).reduce((s, v) => s + v, 0);
 
   return <div className={`rounded-xl border p-4 sm:p-5 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
     <h3 className={`text-sm font-semibold mb-4 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>SETTINGS</h3>
@@ -1480,7 +1477,7 @@ function SettingsTab({ settings, onSave, onSync, onImport, onCSVImport, darkMode
       {/* Admin: Scoring Config */}
       {canConfigureScoring(currentUser) && <div>
         <h4 className={`text-base font-semibold mb-2 ${darkMode ? "text-gray-100" : "text-gray-900"}`}>Scoring Configuration</h4>
-        <p className={`text-xs mb-3 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Configure thresholds and dimension weights for health score calculations.</p>
+        <p className={`text-xs mb-3 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Configure the health score thresholds. Dimension weights are locked for consistency across the team.</p>
 
         <div className={`p-4 rounded-lg border ${darkMode ? "bg-slate-700 border-slate-600" : "bg-gray-50 border-gray-200"}`}>
           <div className="grid grid-cols-2 gap-4 mb-4">
@@ -1496,23 +1493,20 @@ function SettingsTab({ settings, onSave, onSync, onImport, onCSVImport, darkMode
             </div>
           </div>
 
-          <h5 className={`text-xs font-semibold mb-2 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>DIMENSION WEIGHTS (must sum to 1.0)</h5>
-          <div className="space-y-2 mb-3">
+          <h5 className={`text-xs font-semibold mb-2 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>DIMENSION WEIGHTS (locked)</h5>
+          <div className={`space-y-1.5 mb-3 rounded-lg p-3 ${darkMode ? "bg-slate-800 border border-slate-600" : "bg-white border border-gray-200"}`}>
             {DIMENSIONS.map(dim => (
               <div key={dim} className="flex items-center gap-2">
-                <span className={`text-xs w-32 ${darkMode ? "text-gray-300" : "text-gray-700"}`}>{dim}</span>
-                <input type="range" min="0" max="0.5" step="0.01" value={scWeights[dim] || 0}
-                  onChange={e => setScWeights({ ...scWeights, [dim]: Number(e.target.value) })}
-                  className="flex-1 h-2 accent-blue-600" />
-                <span className={`text-xs w-10 text-right font-mono ${darkMode ? "text-gray-300" : "text-gray-700"}`}>{(scWeights[dim] || 0).toFixed(2)}</span>
+                <span className={`text-xs flex-1 ${darkMode ? "text-gray-300" : "text-gray-700"}`}>{dim}</span>
+                <div className={`flex-1 h-2 rounded-full overflow-hidden ${darkMode ? "bg-slate-700" : "bg-gray-100"}`}>
+                  <div className="h-full rounded-full bg-blue-500" style={{ width: `${(lockedWeights[dim] || 0) * 200}%` }} />
+                </div>
+                <span className={`text-xs w-12 text-right font-mono font-semibold ${darkMode ? "text-gray-200" : "text-gray-800"}`}>{Math.round((lockedWeights[dim] || 0) * 100)}%</span>
               </div>
             ))}
           </div>
-          <div className={`text-xs mb-3 ${Math.abs(weightsSum - 1.0) < 0.01 ? "text-green-600" : "text-red-600"}`}>
-            Sum: {weightsSum.toFixed(2)} {Math.abs(weightsSum - 1.0) < 0.01 ? "(valid)" : "(must be 1.0)"}
-          </div>
-          <button onClick={handleSaveScoringConfig} disabled={Math.abs(weightsSum - 1.0) >= 0.01}
-            className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-40">Save Scoring Config</button>
+          <button onClick={handleSaveScoringConfig}
+            className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700">Save Thresholds</button>
         </div>
       </div>}
 

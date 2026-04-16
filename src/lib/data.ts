@@ -174,10 +174,9 @@ export const METRIC_COUNT = 16;
 export const DIMENSIONS = ["Engagement", "Progress", "Satisfaction", "Financial Health", "Relationship", "Referral Awareness"];
 export const DIM_WEIGHTS: Record<string, number> = { Engagement: 0.25, Progress: 0.23, Satisfaction: 0.18, "Financial Health": 0.14, Relationship: 0.11, "Referral Awareness": 0.09 };
 
-export function getEffectiveWeights(settings?: Settings): Record<string, number> {
-  if (settings?.scoringConfig?.dimensionWeights) {
-    return { ...DIM_WEIGHTS, ...settings.scoringConfig.dimensionWeights };
-  }
+// Dimension weights are locked — scoring calibration is a trust-level concern
+// and shouldn't drift. Override settings (if any) are ignored.
+export function getEffectiveWeights(_settings?: Settings): Record<string, number> {
   return DIM_WEIGHTS;
 }
 
