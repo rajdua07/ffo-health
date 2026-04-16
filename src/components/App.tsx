@@ -697,11 +697,51 @@ function ComplianceTab({ stats, onSelect, darkMode }: { stats: ClientStat[]; onS
   const nowMs = Date.now();
   const cc: Record<string, { bg: string; tx: string }> = { OVERDUE: { bg: "#fecaca", tx: "#991b1b" }, NEVER: { bg: "#e5e7eb", tx: "#374151" }, "DUE SOON": { bg: "#fef9c3", tx: "#854d0e" }, "ON TRACK": { bg: "#dcfce7", tx: "#166534" } };
   const items = useMemo(() => stats.map(c => {
-    const cadence = CADENCE_DAYS[c.tier] || 30; const lastTs = c.lastScoredTs ? new Date(c.lastScoredTs).getTime() : null;
+    const isQuarterly = SCORING_FREQUENCY[c.tier] === "quarterly";
+    const now = new Date(nowMs);
+    const curYear = now.getFullYear();
+    const curMonth = now.getMonth();
+    const curQuarter = quarterFromMonth(curMonth);
+
+    // Deadline = last day of current period (month or quarter)
+    const periodEnd = isQuarterly
+      ? new Date(curYear, quarterEndMonth(curQuarter) + 1, 0, 23, 59, 59)
+      : new Date(curYear, curMonth + 1, 0, 23, 59, 59);
+    const periodLabel = isQuarterly
+      ? `Q${curQuarter + 1} ${curYear}`
+      : `${MO[curMonth]} ${curYear}`;
+
+    // Has this client been scored for the current period?
+    const scoredThisPeriod = !!c.latest && c.latest.year === curYear && (
+      isQuarterly
+        ? quarterFromMonth(c.latest.month) === curQuarter
+        : c.latest.month === curMonth
+    );
+
+    const daysUntilDeadline = Math.ceil((periodEnd.getTime() - nowMs) / 86400000);
+    const lastTs = c.lastScoredTs ? new Date(c.lastScoredTs).getTime() : null;
     const daysSince = lastTs ? Math.floor((nowMs - lastTs) / 86400000) : 999;
-    const compStatus = daysSince === 999 ? "NEVER" : daysSince > cadence ? "OVERDUE" : daysSince > cadence - 7 ? "DUE SOON" : "ON TRACK";
-    return { ...c, cadence, daysSince, compStatus };
-  }).sort((a, b) => b.daysSince - a.daysSince), [stats, nowMs]);
+
+    let compStatus: string;
+    if (!c.latest) {
+      compStatus = "NEVER";
+    } else if (scoredThisPeriod) {
+      compStatus = "ON TRACK";
+    } else if (daysUntilDeadline < 0) {
+      compStatus = "OVERDUE";
+    } else if (daysUntilDeadline <= 7) {
+      compStatus = "DUE SOON";
+    } else {
+      compStatus = "ON TRACK";
+    }
+
+    return { ...c, daysSince, compStatus, daysUntilDeadline, periodLabel, isQuarterly };
+  }).sort((a, b) => {
+    // Sort: overdue/never first, then due soon, then on track
+    const rank = (s: string) => s === "OVERDUE" || s === "NEVER" ? 0 : s === "DUE SOON" ? 1 : 2;
+    const r = rank(a.compStatus) - rank(b.compStatus);
+    return r !== 0 ? r : a.daysUntilDeadline - b.daysUntilDeadline;
+  }), [stats, nowMs]);
 
   const groups = [
     { key: "overdue", items: items.filter(i => i.compStatus === "OVERDUE" || i.compStatus === "NEVER"), color: "red", label: "OVERDUE" },
@@ -720,12 +760,19 @@ function ComplianceTab({ stats, onSelect, darkMode }: { stats: ClientStat[]; onS
         <h3 className={`text-sm font-semibold text-${g.color}-700 mb-3`}>{g.label} ({g.items.length})</h3>
         {g.items.map(c => {
           const co = cc[c.compStatus];
+          const deadlineText = c.compStatus === "OVERDUE"
+            ? `${Math.abs(c.daysUntilDeadline)}d overdue`
+            : c.compStatus === "NEVER"
+              ? "Never scored"
+              : c.daysUntilDeadline <= 0
+                ? "Due today"
+                : `${c.daysUntilDeadline}d left`;
           return <div key={c.id} className={`flex items-center gap-2 py-2 px-2 rounded-lg cursor-pointer ${darkMode ? "hover:bg-slate-700" : "hover:bg-gray-50"}`} onClick={() => onSelect(c.id)}>
             <div className={`w-40 truncate text-sm font-medium ${darkMode ? "text-gray-300" : "text-gray-700"}`}>{c.name}</div>
-            <span className={`text-xs px-2 py-0.5 rounded w-20 text-center ${darkMode ? "bg-slate-700 text-gray-400" : "bg-gray-100 text-gray-500"}`}>{c.tier}</span>
-            <span className={`text-xs w-14 text-center ${darkMode ? "text-gray-400" : "text-gray-400"}`}>{c.leadAdvisor}</span>
+            <span className={`text-xs px-2 py-0.5 rounded w-24 text-center truncate ${darkMode ? "bg-slate-700 text-gray-400" : "bg-gray-100 text-gray-500"}`}>{c.isQuarterly ? "Quarterly" : "Monthly"}</span>
+            <span className={`text-xs w-20 text-center ${darkMode ? "text-gray-400" : "text-gray-400"}`}>{c.periodLabel}</span>
             <span className="text-xs px-2 py-0.5 rounded-full font-semibold w-20 text-center" style={{ background: co.bg, color: co.tx }}>{c.compStatus}</span>
-            <span className={`text-xs w-20 text-center ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{c.daysSince === 999 ? "Never" : `${c.daysSince}d ago`}</span>
+            <span className={`text-xs w-24 text-right ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{deadlineText}</span>
           </div>;
         })}
       </div>
@@ -938,6 +985,7 @@ function NPSTab({ stats, npsFeedback, onAddFeedback, onImportSurveys, darkMode }
   const [showForm, setShowForm] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState("");
+  const [copied, setCopied] = useState(false);
   const [fbClientId, setFbClientId] = useState("");
   const [fbScore, setFbScore] = useState(8);
   const [fbComment, setFbComment] = useState("");
@@ -1014,8 +1062,13 @@ function NPSTab({ stats, npsFeedback, onAddFeedback, onImportSurveys, darkMode }
           const cId = sel?.value; if (!cId) return;
           const cl = stats.find(c => c.id === cId); if (!cl) return;
           const link = generateNPSSurveyLink(cId, cl.name);
-          navigator.clipboard.writeText(link).then(() => { alert("Survey link copied to clipboard!\n\n" + link); });
-        }} className="bg-purple-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-purple-700 whitespace-nowrap">Copy Survey Link</button>
+          navigator.clipboard.writeText(link).then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+          });
+        }} className={`px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap flex items-center gap-1.5 ${copied ? "bg-green-600 text-white hover:bg-green-700" : "bg-purple-600 text-white hover:bg-purple-700"}`}>
+          {copied ? <>{"\u2713"} Copied</> : "Copy Survey Link"}
+        </button>
       </div>
     </div>
 
