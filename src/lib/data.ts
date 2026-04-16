@@ -41,6 +41,8 @@ export interface Client {
   birthDate?: string;
   completedTasks?: Array<{ name: string; completedAt: string; description?: string }>;
   baselineCompletedAt?: string; // timestamp when baseline scoring was completed
+  engagementStatus?: "Active" | "Paused" | "Offboarded"; // defaults to Active
+  engagementStatusChangedAt?: string; // when engagement status was last updated
   slackChannelId?: string;      // Slack channel ID for client comms (e.g. C0ABCDEF123)
   googleDriveFolderId?: string;  // Google Drive folder ID for client docs/transcripts
 }
@@ -212,6 +214,10 @@ export function sColor(st: string | null) {
 
 export function getReferralSources(settings?: Settings): string[] {
   return settings?.referralSources || REFERRAL_SOURCES;
+}
+
+export function getEngagementStatus(client: Partial<Client> | null): "Active" | "Paused" | "Offboarded" {
+  return client?.engagementStatus || "Active";
 }
 
 export function getFee(client: Partial<Client> | null): number {

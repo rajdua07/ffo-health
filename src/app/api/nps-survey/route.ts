@@ -1,14 +1,33 @@
 import { NextResponse } from 'next/server';
-import { kv } from '@vercel/kv';
 
 const KV_PREFIX = 'nps_response:';
 const KV_INDEX = 'nps_pending_ids';
 
-async function kvAvailable(): Promise<boolean> {
+// Support both KV_REST_API_* (Vercel KV) and UPSTASH_REDIS_REST_* (Upstash direct)
+const REDIS_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+const REDIS_TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+
+function kvAvailable(): boolean {
+  return !!(REDIS_URL && REDIS_TOKEN);
+}
+
+async function redisCmd(...args: (string | number)[]): Promise<any> {
+  if (!kvAvailable()) return null;
   try {
-    await kv.ping();
-    return true;
-  } catch { return false; }
+    const resp = await fetch(REDIS_URL!, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${REDIS_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(args),
+    });
+    const data = await resp.json();
+    return data.result ?? data;
+  } catch (err) {
+    console.error('Redis error:', err);
+    return null;
+  }
 }
 
 // GET: Validate a survey token OR fetch pending responses
@@ -19,36 +38,37 @@ export async function GET(request: Request) {
 
   // Fetch pending NPS responses (called by the app)
   if (action === 'pending') {
-    if (!await kvAvailable()) {
+    if (!kvAvailable()) {
       return NextResponse.json({ success: true, responses: [], kvConfigured: false });
     }
     try {
-      const ids: string[] = await kv.lrange(KV_INDEX, 0, -1) || [];
-      if (ids.length === 0) return NextResponse.json({ success: true, responses: [] });
+      const ids: string[] = (await redisCmd('LRANGE', KV_INDEX, 0, -1)) || [];
+      if (ids.length === 0) return NextResponse.json({ success: true, responses: [], kvConfigured: true });
 
       const responses = [];
       for (const id of ids) {
-        const data = await kv.get(`${KV_PREFIX}${id}`);
-        if (data) responses.push(data);
+        const raw = await redisCmd('GET', `${KV_PREFIX}${id}`);
+        if (raw) {
+          try { responses.push(typeof raw === 'string' ? JSON.parse(raw) : raw); }
+          catch { /* skip malformed */ }
+        }
       }
-      return NextResponse.json({ success: true, responses });
+      return NextResponse.json({ success: true, responses, kvConfigured: true });
     } catch (err) {
       console.error('Failed to fetch pending NPS:', err);
-      return NextResponse.json({ success: true, responses: [] });
+      return NextResponse.json({ success: true, responses: [], error: String(err) });
     }
   }
 
   // Claim (delete) pending responses after import
   if (action === 'claim') {
-    if (!await kvAvailable()) {
-      return NextResponse.json({ success: true });
-    }
+    if (!kvAvailable()) return NextResponse.json({ success: true });
     try {
-      const ids: string[] = await kv.lrange(KV_INDEX, 0, -1) || [];
+      const ids: string[] = (await redisCmd('LRANGE', KV_INDEX, 0, -1)) || [];
       for (const id of ids) {
-        await kv.del(`${KV_PREFIX}${id}`);
+        await redisCmd('DEL', `${KV_PREFIX}${id}`);
       }
-      await kv.del(KV_INDEX);
+      await redisCmd('DEL', KV_INDEX);
       return NextResponse.json({ success: true, claimed: ids.length });
     } catch {
       return NextResponse.json({ success: true });
@@ -107,10 +127,31 @@ export async function POST(request: Request) {
       submittedAt: new Date().toISOString(),
     };
 
-    if (await kvAvailable()) {
-      // Store in Vercel KV with 30-day TTL
-      await kv.set(`${KV_PREFIX}${response.id}`, response, { ex: 30 * 86400 });
-      await kv.rpush(KV_INDEX, response.id);
+    if (kvAvailable()) {
+      // Store in Redis with 30-day TTL (2592000 seconds)
+      await redisCmd('SET', `${KV_PREFIX}${response.id}`, JSON.stringify(response), 'EX', 2592000);
+      await redisCmd('RPUSH', KV_INDEX, response.id);
+    } else {
+      // No storage configured — return error so the survey page knows
+      console.error('No Redis configured — survey response was not stored:', response);
+      return NextResponse.json({
+        success: false,
+        error: 'Survey storage not configured. Please contact your administrator.',
+      }, { status: 500 });
+    }
+
+    // Also send a Slack notification if webhook is configured
+    const slackWebhook = process.env.SLACK_NPS_WEBHOOK;
+    if (slackWebhook) {
+      try {
+        await fetch(slackWebhook, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text: `New NPS response: ${response.npsScore}/10${response.comment ? ` — "${response.comment}"` : ''}`,
+          }),
+        });
+      } catch { /* ignore */ }
     }
 
     return NextResponse.json({ success: true, message: 'Thank you for your feedback!' });

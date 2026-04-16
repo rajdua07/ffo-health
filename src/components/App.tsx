@@ -839,20 +839,34 @@ function AlertsTab({ stats, onSelect, darkMode }: { stats: ClientStat[]; onSelec
 
 // ===== REVENUE =====
 function RevenueTab({ stats, darkMode, settings }: { stats: ClientStat[]; darkMode?: boolean; settings?: Settings }) {
-  const totalRev = stats.reduce((s, c) => s + c.monthlyFee, 0);
+  const activeClients = stats.filter(c => c.engagementStatus !== "Paused" && c.engagementStatus !== "Offboarded");
+  const pausedClients = stats.filter(c => c.engagementStatus === "Paused");
+  const offboardedClients = stats.filter(c => c.engagementStatus === "Offboarded");
+
+  const totalRev = activeClients.reduce((s, c) => s + c.monthlyFee, 0);
+  const pausedRev = pausedClients.reduce((s, c) => s + c.monthlyFee, 0);
+  const lostRev = offboardedClients.reduce((s, c) => s + c.monthlyFee, 0);
+
   const byStatus = ["HEALTHY", "WATCH", "AT RISK", null].map(st => {
-    const cs = stats.filter(c => c.status === st); const rev = cs.reduce((s, c) => s + c.monthlyFee, 0);
+    const cs = activeClients.filter(c => c.status === st); const rev = cs.reduce((s, c) => s + c.monthlyFee, 0);
     return { status: st || "UNSCORED", count: cs.length, rev, pct: totalRev ? rev / totalRev * 100 : 0 };
   });
   return <div className="space-y-5">
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      <StatCard label="Monthly" value={fmtM(totalRev)} color="#1B2A4A" sub={fmtM(totalRev * 12) + "/yr"} darkMode={darkMode} />
+      <StatCard label="Monthly Rev" value={fmtM(totalRev)} color="#1B2A4A" sub={fmtM(totalRev * 12) + "/yr"} darkMode={darkMode} />
       <StatCard label="Healthy Rev" value={fmtM(byStatus[0].rev)} color="#166534" sub={`${Math.round(byStatus[0].pct)}%`} darkMode={darkMode} />
       <StatCard label="Watch Rev" value={fmtM(byStatus[1].rev)} color="#854d0e" sub={`${Math.round(byStatus[1].pct)}%`} darkMode={darkMode} />
       <StatCard label="At-Risk Rev" value={fmtM(byStatus[2].rev)} color="#991b1b" sub={`${Math.round(byStatus[2].pct)}%`} darkMode={darkMode} />
     </div>
+
+    {/* Churn tracker */}
+    <div className="grid grid-cols-2 gap-3">
+      <StatCard label="Paused Rev" value={fmtM(pausedRev)} color="#d97706" sub={`${pausedClients.length} client${pausedClients.length === 1 ? "" : "s"}`} darkMode={darkMode} />
+      <StatCard label="Lost Rev" value={fmtM(lostRev)} color="#991b1b" sub={`${offboardedClients.length} offboarded`} darkMode={darkMode} />
+    </div>
+
     <div className={`rounded-xl border p-4 sm:p-5 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
-      <h3 className={`text-sm font-semibold mb-3 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>REVENUE BY STATUS</h3>
+      <h3 className={`text-sm font-semibold mb-3 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>REVENUE BY STATUS (Active clients)</h3>
       <div className="h-8 flex rounded-lg overflow-hidden mb-2">
         {byStatus.filter(s => s.pct > 0).map(s => {
           const c = sColor(s.status === "UNSCORED" ? null : s.status);
@@ -860,9 +874,36 @@ function RevenueTab({ stats, darkMode, settings }: { stats: ClientStat[]; darkMo
         })}
       </div>
     </div>
+
+    {(pausedClients.length > 0 || offboardedClients.length > 0) && (
+      <div className={`rounded-xl border p-4 sm:p-5 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
+        <h3 className={`text-sm font-semibold mb-3 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>CHURN TRACKER</h3>
+        {pausedClients.length > 0 && <div className="mb-3">
+          <div className="text-xs font-semibold text-amber-600 mb-1.5">Paused ({pausedClients.length})</div>
+          {pausedClients.map(c => (
+            <div key={c.id} className="flex items-center gap-2 py-1">
+              <span className={`flex-1 truncate text-sm ${darkMode ? "text-gray-300" : "text-gray-700"}`}>{c.name}</span>
+              <span className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{c.tier}</span>
+              <span className={`w-14 text-right text-sm font-semibold ${darkMode ? "text-gray-200" : ""}`}>{fmtM(c.monthlyFee)}</span>
+            </div>
+          ))}
+        </div>}
+        {offboardedClients.length > 0 && <div>
+          <div className="text-xs font-semibold text-red-600 mb-1.5">Offboarded ({offboardedClients.length})</div>
+          {offboardedClients.map(c => (
+            <div key={c.id} className="flex items-center gap-2 py-1">
+              <span className={`flex-1 truncate text-sm ${darkMode ? "text-gray-300" : "text-gray-700"}`}>{c.name}</span>
+              <span className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{c.tier}</span>
+              <span className={`w-14 text-right text-sm font-semibold line-through ${darkMode ? "text-gray-500" : "text-gray-400"}`}>{fmtM(c.monthlyFee)}</span>
+            </div>
+          ))}
+        </div>}
+      </div>
+    )}
+
     <div className={`rounded-xl border p-4 sm:p-5 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
       <h3 className={`text-sm font-semibold mb-3 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>BY CLIENT</h3>
-      {[...stats].sort((a, b) => b.monthlyFee - a.monthlyFee).map(c => (
+      {[...activeClients].sort((a, b) => b.monthlyFee - a.monthlyFee).map(c => (
         <div key={c.id} className="flex items-center gap-2 py-1">
           <span className={`w-36 truncate text-sm ${darkMode ? "text-gray-300" : "text-gray-700"}`}>{c.name}</span>
           <div className={`flex-1 h-3 rounded-full overflow-hidden ${darkMode ? "bg-slate-700" : "bg-gray-100"}`}><div className="h-full rounded-full" style={{ width: `${totalRev ? c.monthlyFee / totalRev * 100 : 0}%`, background: sColor(c.status).bd }} /></div>
@@ -1762,6 +1803,7 @@ function ClientForm({ client, onSave, onCancel, referralSources, darkMode, setti
   const [pod, setPod] = useState(client?.pod ?? "");
   const [slackCh, setSlackCh] = useState(client?.slackChannelId ?? "");
   const [gdFolderId, setGdFolderId] = useState(client?.googleDriveFolderId ?? "");
+  const [clientStatus, setClientStatus] = useState<"Active" | "Paused" | "Offboarded">(client?.engagementStatus ?? "Active");
   const selectedPod = allPods.find(p => p.id === pod);
 
   return <div className="space-y-5">
@@ -1792,9 +1834,32 @@ function ClientForm({ client, onSave, onCancel, referralSources, darkMode, setti
         <div>
           <label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Google Drive Folder ID</label><input className={`w-full border rounded-lg px-3 py-2 text-sm font-mono ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200 placeholder-gray-500" : "border-gray-200 bg-white"}`} value={gdFolderId} onChange={e => setGdFolderId(e.target.value)} placeholder="Folder ID from Google Drive URL" />
         </div>
+        <div>
+          <label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Client Status</label>
+          <div className="flex gap-2">
+            {(["Active", "Paused", "Offboarded"] as const).map(s => {
+              const active = clientStatus === s;
+              const col = s === "Active" ? "green" : s === "Paused" ? "amber" : "red";
+              return <button key={s} type="button" onClick={() => setClientStatus(s)} className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium border ${active ? (col === "green" ? "bg-green-600 text-white border-green-600" : col === "amber" ? "bg-amber-500 text-white border-amber-500" : "bg-red-600 text-white border-red-600") : (darkMode ? "bg-slate-700 border-slate-600 text-gray-300 hover:bg-slate-600" : "bg-white border-gray-200 text-gray-600 hover:bg-gray-50")}`}>{s}</button>;
+            })}
+          </div>
+        </div>
       </div>
       <div className="flex gap-2 mt-4">
-        <button onClick={() => onSave({ id: client?.id || ("c" + Date.now()), name, tier, leadAdvisor: selectedPod?.advisor || client?.leadAdvisor || "", onboardDate: date, monthlyFee: mFee, referralSource: refSrc, referredBy: refBy, wealthboxId: wbId || undefined, pod: pod || undefined, wpa: selectedPod?.wpa || undefined, slackChannelId: slackCh || undefined, googleDriveFolderId: gdFolderId || undefined })} disabled={!name.trim() || !pod} className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40">Save</button>
+        <button onClick={() => {
+          const statusChanged = (client?.engagementStatus || "Active") !== clientStatus;
+          onSave({
+            id: client?.id || ("c" + Date.now()),
+            name, tier, leadAdvisor: selectedPod?.advisor || client?.leadAdvisor || "",
+            onboardDate: date, monthlyFee: mFee, referralSource: refSrc, referredBy: refBy,
+            wealthboxId: wbId || undefined, pod: pod || undefined,
+            wpa: selectedPod?.wpa || undefined,
+            slackChannelId: slackCh || undefined,
+            googleDriveFolderId: gdFolderId || undefined,
+            engagementStatus: clientStatus,
+            engagementStatusChangedAt: statusChanged ? new Date().toISOString() : client?.engagementStatusChangedAt,
+          });
+        }} disabled={!name.trim() || !pod} className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40">Save</button>
         <button onClick={onCancel} className={`border px-4 py-2 rounded-lg text-sm ${darkMode ? "border-slate-600 text-gray-300 hover:bg-slate-700" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>Cancel</button>
       </div>
     </div>
