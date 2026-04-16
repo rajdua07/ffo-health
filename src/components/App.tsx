@@ -2032,13 +2032,15 @@ export default function App() {
 
   const handleSaveScore = async (s: Score) => {
     const idx = data.scores.findIndex(x => x.clientId === s.clientId && x.year === s.year && x.month === s.month);
-    const ns = [...data.scores]; if (idx >= 0) ns[idx] = s; else ns.push(s);
+    const existingScores = Array.isArray(data.scores) ? data.scores : [];
+    const existingClients = Array.isArray(data.clients) ? data.clients : [];
+    const ns = [...existingScores]; if (idx >= 0) ns[idx] = s; else ns.push(s);
 
     // Mark baseline completed if first score for this client
-    const clientScoreCount = data.scores.filter(x => x.clientId === s.clientId).length;
-    let updatedClients = data.clients;
+    const clientScoreCount = existingScores.filter(x => x.clientId === s.clientId).length;
+    let updatedClients = existingClients;
     if (clientScoreCount === 0 || (idx < 0 && clientScoreCount === 0)) {
-      updatedClients = data.clients.map(c =>
+      updatedClients = existingClients.map(c =>
         c.id === s.clientId ? { ...c, baselineCompletedAt: c.baselineCompletedAt || new Date().toISOString() } : c
       );
     }
@@ -2046,7 +2048,7 @@ export default function App() {
     await persist({ ...data, scores: ns, clients: updatedClients });
 
     // Push to Wealthbox if enabled and client has wealthboxId
-    const client = data.clients.find(c => c.id === s.clientId);
+    const client = existingClients.find(c => c.id === s.clientId);
     if (data.settings?.wealthboxEnabled && client?.wealthboxId) {
       const score = calcScore(s.scores);
       if (score !== null) {
@@ -2090,8 +2092,9 @@ export default function App() {
   };
 
   const handleSaveClient = async (c: Client) => {
-    const idx = data.clients.findIndex(x => x.id === c.id);
-    const nc = [...data.clients];
+    const existing = Array.isArray(data.clients) ? data.clients : [];
+    const idx = existing.findIndex(x => x.id === c.id);
+    const nc = [...existing];
     if (idx >= 0) { nc[idx] = { ...nc[idx], ...c }; } else nc.push(c);
     await persist({ ...data, clients: nc });
     if (view === "addClient") { setSelectedId(c.id); setView("detail"); } else setView("detail");
@@ -2128,15 +2131,17 @@ export default function App() {
   };
 
   const handleCSVImport = async (clients: Client[]) => {
-    const mergedClients = [...data.clients, ...clients];
+    const existing = Array.isArray(data.clients) ? data.clients : [];
+    const mergedClients = [...existing, ...clients];
     await persist({ ...data, clients: mergedClients });
   };
 
   const handleWealthboxSync = async () => {
     try {
       const wealthboxClients = await syncFromWealthbox();
+      const existing = Array.isArray(data.clients) ? data.clients : [];
 
-      const updatedClients = data.clients.map(existingClient => {
+      const updatedClients = existing.map(existingClient => {
         if (!existingClient.wealthboxId) return existingClient;
         const wealthboxClient = wealthboxClients.find(wc => wc.wealthboxId === existingClient.wealthboxId);
         if (!wealthboxClient) return existingClient;
@@ -2151,7 +2156,7 @@ export default function App() {
         };
       });
 
-      const existingWealthboxIds = new Set(data.clients.map(c => c.wealthboxId).filter(Boolean));
+      const existingWealthboxIds = new Set(existing.map(c => c.wealthboxId).filter(Boolean));
       const newClients = wealthboxClients.filter(wc => !existingWealthboxIds.has(wc.wealthboxId));
 
       const mergedClients = [...updatedClients, ...newClients];
@@ -2165,7 +2170,8 @@ export default function App() {
   const handleWealthboxImport = async (selectedClients: Client[]): Promise<number> => {
     try {
       if (selectedClients.length > 0) {
-        const mergedClients = [...data.clients, ...selectedClients];
+        const existing = Array.isArray(data.clients) ? data.clients : [];
+        const mergedClients = [...existing, ...selectedClients];
         await persist({ ...data, clients: mergedClients });
       }
       return selectedClients.length;
@@ -2239,7 +2245,7 @@ export default function App() {
       {view === "addClient" && <ClientForm onSave={handleSaveClient} onCancel={back} referralSources={getReferralSources(data.settings)} darkMode={darkMode} settings={data.settings} />}
       {view === "editClient" && selected && <ClientForm client={selected} onSave={handleSaveClient} onCancel={() => setView("detail")} referralSources={getReferralSources(data.settings)} darkMode={darkMode} settings={data.settings} />}
       {view === "addWow" && selected && <WowForm clientId={selectedId!} onSave={handleSaveWow} onCancel={() => setView("detail")} darkMode={darkMode} />}
-      {view === "addRef" && <ReferralForm clients={data.clients} onSave={handleSaveRef} onCancel={() => { setView("dashboard"); setTab("overview"); }} referralSources={getReferralSources(data.settings)} darkMode={darkMode} />}
+      {view === "addRef" && <ReferralForm clients={data.clients || []} onSave={handleSaveRef} onCancel={() => { setView("dashboard"); setTab("overview"); }} referralSources={getReferralSources(data.settings)} darkMode={darkMode} />}
     </div>
   </div>;
 }

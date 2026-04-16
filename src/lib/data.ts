@@ -406,11 +406,16 @@ export const DEFAULT_REFERRALS: Referral[] = [
 
 // === STORAGE ===
 // Migration: upgrade old data shapes (14-metric scores, missing pods, etc.)
+// Also defensively ensures every required collection is a real array.
 function migrateData(parsed: any): AppData {
-  if (!parsed.referrals) parsed.referrals = DEFAULT_REFERRALS;
-  if (!parsed.npsFeedback) parsed.npsFeedback = [];
+  if (!parsed || typeof parsed !== "object") parsed = {};
+  if (!Array.isArray(parsed.clients)) parsed.clients = [];
+  if (!Array.isArray(parsed.scores)) parsed.scores = [];
+  if (!Array.isArray(parsed.wows)) parsed.wows = [];
+  if (!Array.isArray(parsed.referrals)) parsed.referrals = DEFAULT_REFERRALS;
+  if (!Array.isArray(parsed.npsFeedback)) parsed.npsFeedback = [];
 
-  if (parsed.scores && parsed.scores.length > 0) {
+  if (parsed.scores.length > 0) {
     parsed.scores = parsed.scores.map((score: Score) => {
       if (score.scores.length === 11) {
         const old = score.scores;
@@ -423,15 +428,13 @@ function migrateData(parsed: any): AppData {
     });
   }
 
-  if (parsed.clients) {
-    parsed.clients = parsed.clients.map((c: Client) => {
-      if (!c.pod) {
-        const pod = DEFAULT_PODS.find(p => p.advisor === c.leadAdvisor || p.advisors?.includes(c.leadAdvisor));
-        return { ...c, pod: pod?.id || "" };
-      }
-      return c;
-    });
-  }
+  parsed.clients = parsed.clients.map((c: Client) => {
+    if (!c.pod) {
+      const pod = DEFAULT_PODS.find(p => p.advisor === c.leadAdvisor || p.advisors?.includes(c.leadAdvisor));
+      return { ...c, pod: pod?.id || "" };
+    }
+    return c;
+  });
   return parsed;
 }
 
