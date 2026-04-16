@@ -205,18 +205,35 @@ export async function POST(request: Request) {
     const notes = allNotes.filter((n: any) => inPeriod(n.created_at));
     const slackMessages = allSlackMessages.filter(m => inPeriod(m.ts));
 
+    // Strip HTML and normalize whitespace for task/event descriptions
+    const cleanDesc = (d: any): string => {
+      if (!d) return '';
+      return String(d)
+        .replace(/<[^>]*>/g, ' ')      // strip HTML tags
+        .replace(/&nbsp;/g, ' ')       // decode common entities
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/\s+/g, ' ')          // collapse whitespace
+        .trim();
+    };
+
     // Build data context — generous limits since Claude has 200K context
-    const completedList = completedTasks.map((t: any) =>
-      `- ${t.name} — completed by ${resolveUserName(t.completer)} on ${new Date(t.due_date || t.updated_at || t.created_at || '').toLocaleDateString()}${t.description ? '\n  ' + t.description.slice(0, 500) : ''}`
-    ).join('\n') || 'None';
+    const completedList = completedTasks.map((t: any) => {
+      const desc = cleanDesc(t.description || t.description_html);
+      return `- ${t.name} — completed by ${resolveUserName(t.completer)} on ${new Date(t.due_date || t.updated_at || t.created_at || '').toLocaleDateString()}${desc ? '\n  Description: ' + desc.slice(0, 1500) : ''}`;
+    }).join('\n') || 'None';
 
-    const openList = openTasks.map((t: any) =>
-      `- ${t.name} — assigned to ${resolveUserName(t.assigned_to)}${t.due_date ? ', due ' + new Date(t.due_date).toLocaleDateString() : ''}${t.description ? '\n  ' + t.description.slice(0, 500) : ''}`
-    ).join('\n') || 'None';
+    const openList = openTasks.map((t: any) => {
+      const desc = cleanDesc(t.description || t.description_html);
+      return `- ${t.name} — assigned to ${resolveUserName(t.assigned_to)}${t.due_date ? ', due ' + new Date(t.due_date).toLocaleDateString() : ''}${desc ? '\n  Description: ' + desc.slice(0, 1500) : ''}`;
+    }).join('\n') || 'None';
 
-    const eventsList = events.map((e: any) =>
-      `- ${e.title} (${e.starts_at ? new Date(e.starts_at).toLocaleDateString() : 'no date'})${e.description ? ': ' + e.description.slice(0, 500) : ''}`
-    ).join('\n') || 'None';
+    const eventsList = events.map((e: any) => {
+      const desc = cleanDesc(e.description);
+      return `- ${e.title} (${e.starts_at ? new Date(e.starts_at).toLocaleDateString() : 'no date'})${desc ? ': ' + desc.slice(0, 1000) : ''}`;
+    }).join('\n') || 'None';
 
     const notesList = notes.map((n: any) =>
       `- ${new Date(n.created_at).toLocaleDateString()}: ${n.content.slice(0, 1000)}`
@@ -332,6 +349,8 @@ Based on ALL the data above, provide scores for each of the 16 metrics. You MUST
 }
 
 Each score must be an integer from 1 to 10. Score conservatively — use 5 when data is insufficient.
+
+CRITICAL: The "Description" field on each task contains rich context — team discussions, email recaps, client messages, internal notes, action item details. Read these descriptions carefully and use them as evidence when scoring. Don't just rely on task names.
 
 IMPORTANT: For each dimension justification, if there is insufficient data to confidently score any metrics in that dimension, explicitly say "ADVISOR INPUT NEEDED:" followed by which specific metrics the advisor should score manually and why. For example: "ADVISOR INPUT NEEDED: Meeting Attendance and Direct Feedback — no meeting or feedback data available for this period, advisor should score based on their direct experience."
 

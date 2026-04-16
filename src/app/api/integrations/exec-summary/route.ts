@@ -118,13 +118,13 @@ LAST CHECK-IN: ${lastCheckinDate ? new Date(lastCheckinDate).toLocaleDateString(
 TODAY: ${new Date().toLocaleDateString()}
 
 --- RECENTLY COMPLETED TASKS (${completedTasks.length}) ---
-${completedTasks.length === 0 ? 'None' : completedTasks.map((t: any) => `- ${t.name} — completed by ${t.completedBy || 'team'} on ${new Date(t.completedAt).toLocaleDateString()}${t.description ? '\n  Context: ' + t.description.slice(0, 500) : ''}`).join('\n')}
+${completedTasks.length === 0 ? 'None' : completedTasks.map((t: any) => `- ${t.name} — completed by ${t.completedBy || 'team'} on ${new Date(t.completedAt).toLocaleDateString()}${t.description ? '\n  Description: ' + t.description.slice(0, 1500) : ''}`).join('\n')}
 
 --- OPEN TASKS / CURRENT PRIORITIES (${currentPriorities.length}) ---
-${currentPriorities.length === 0 ? 'None' : currentPriorities.map((t: any) => `- ${t.name} — assigned to ${t.assignedTo || 'unassigned'}${t.dueDate ? ', due ' + new Date(t.dueDate).toLocaleDateString() : ''}${t.description ? '\n  Context: ' + t.description.slice(0, 500) : ''}`).join('\n')}
+${currentPriorities.length === 0 ? 'None' : currentPriorities.map((t: any) => `- ${t.name} — assigned to ${t.assignedTo || 'unassigned'}${t.dueDate ? ', due ' + new Date(t.dueDate).toLocaleDateString() : ''}${t.description ? '\n  Description: ' + t.description.slice(0, 1500) : ''}`).join('\n')}
 
 --- OVERDUE ITEMS (${outstandingItems.length}) ---
-${outstandingItems.length === 0 ? 'None' : outstandingItems.map((t: any) => `- ${t.name} — assigned to ${t.assignedTo || 'unassigned'}, was due ${new Date(t.dueDate!).toLocaleDateString()}${t.description ? '\n  Context: ' + t.description.slice(0, 500) : ''}`).join('\n')}
+${outstandingItems.length === 0 ? 'None' : outstandingItems.map((t: any) => `- ${t.name} — assigned to ${t.assignedTo || 'unassigned'}, was due ${new Date(t.dueDate!).toLocaleDateString()}${t.description ? '\n  Description: ' + t.description.slice(0, 1500) : ''}`).join('\n')}
 
 --- MEETINGS & EVENTS (${emailThreads.filter(e => e.subject !== 'Note').length}) ---
 ${emailThreads.filter(e => e.subject !== 'Note').length === 0 ? 'None' : emailThreads.filter(e => e.subject !== 'Note').map(e => `- ${e.subject} (${new Date(e.date).toLocaleDateString()})${e.snippet ? ': ' + e.snippet.slice(0, 500) : ''}`).join('\n')}
@@ -152,6 +152,8 @@ The briefing should:
 6. Suggest 1-2 talking points for the next meeting
 
 Keep it under 350 words. Use plain language, no jargon. Be direct and actionable. Use bullet points for clarity. Do not use markdown headers.
+
+CRITICAL: The "Description" field on each task contains rich context — team discussions, email recaps, internal notes, client messages. Read these carefully when summarizing what happened, what's blocked, and what's in whose court. Don't just list task names.
 
 ${context}`
     }],
@@ -197,6 +199,21 @@ export async function POST(request: Request) {
       getSlackChannelMessages(slackChannelId || ''),
     ]);
 
+    // Strip HTML and normalize whitespace for task descriptions
+    const cleanDesc = (d: any): string | undefined => {
+      if (!d) return undefined;
+      const cleaned = String(d)
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/\s+/g, ' ')
+        .trim();
+      return cleaned || undefined;
+    };
+
     // Process ALL completed tasks — use due_date as the primary date
     const achievementsSinceLastCheckin = completedTasksRaw
       .sort((a: any, b: any) => new Date(b.due_date || b.updated_at || '').getTime() - new Date(a.due_date || a.updated_at || '').getTime())
@@ -204,7 +221,7 @@ export async function POST(request: Request) {
       .map((t: any) => ({
         name: t.name,
         completedAt: t.due_date || t.updated_at || t.created_at,
-        description: t.description,
+        description: cleanDesc(t.description || t.description_html),
         completedBy: resolveUserName(t.completer),
         assignedTo: resolveUserName(t.assigned_to),
       }));
@@ -220,7 +237,7 @@ export async function POST(request: Request) {
       .map((t: any) => ({
         name: t.name,
         dueDate: t.due_date,
-        description: t.description,
+        description: cleanDesc(t.description || t.description_html),
         assignedTo: resolveUserName(t.assigned_to),
       }));
 
@@ -230,7 +247,7 @@ export async function POST(request: Request) {
       .map((t: any) => ({
         name: t.name,
         dueDate: t.due_date,
-        description: t.description,
+        description: cleanDesc(t.description || t.description_html),
         assignedTo: resolveUserName(t.assigned_to),
       }));
 
