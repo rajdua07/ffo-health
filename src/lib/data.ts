@@ -544,7 +544,7 @@ export async function syncFromWealthbox(): Promise<Client[]> {
   try {
     const response = await fetch('/api/wealthbox/sync');
     const data = await response.json();
-    if (data.success) return data.clients;
+    if (data.success) return Array.isArray(data.clients) ? data.clients : [];
     throw new Error(data.error || 'Sync failed');
   } catch (error) {
     console.error('Failed to sync from Wealthbox:', error);
@@ -601,7 +601,7 @@ export async function enrichClientsWithTasks(clients: Client[]): Promise<Client[
       body: JSON.stringify({ clients })
     });
     const data = await response.json();
-    if (data.success) return data.clients;
+    if (data.success) return Array.isArray(data.clients) ? data.clients : clients;
     throw new Error(data.error || 'Failed to enrich clients with tasks');
   } catch (error) {
     console.error('Failed to enrich clients with tasks:', error);

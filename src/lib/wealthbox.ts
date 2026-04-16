@@ -105,7 +105,7 @@ export async function getWealthboxContacts(): Promise<WealthboxContact[]> {
         `/contacts?per_page=100&status=active&page=${page}`
       );
 
-      if (data.contacts) {
+      if (Array.isArray(data.contacts)) {
         allContacts.push(...data.contacts);
       }
 
