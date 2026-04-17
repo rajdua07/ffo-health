@@ -1393,7 +1393,8 @@ function SettingsTab({ settings, onSave, onSync, onImport, onCSVImport, darkMode
       setBulkProgress({ done: i, total: activeClients.length, current: c.name });
 
       const isQuarterly = SCORING_FREQUENCY[c.tier] === "quarterly";
-      const scoreMonth = isQuarterly ? quarterStartMonth(quarterFromMonth(now.getMonth())) : now.getMonth();
+      // Q1 for quarterly clients, March for monthly clients — April has insufficient data yet
+      const scoreMonth = isQuarterly ? 0 /* Q1 starts in Jan */ : 2 /* March */;
       const scoreYear = now.getFullYear();
 
       try {
@@ -1739,7 +1740,7 @@ function SettingsTab({ settings, onSave, onSync, onImport, onCSVImport, darkMode
       {canConfigureScoring(currentUser) && <div className={`pt-4 border-t ${darkMode ? "border-slate-700" : "border-gray-200"}`}>
         <h4 className={`text-base font-semibold mb-1 ${darkMode ? "text-gray-100" : "text-gray-900"}`}>Bulk AI Scoring</h4>
         <p className={`text-xs mb-3 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>
-          Runs AI scoring for every Active client using their current scoring period (monthly for Fractional Family Office, quarterly for Strategic / Access). Saves all scores with assessor set to &ldquo;AI&rdquo;.
+          Runs AI scoring for every Active client using the most recent complete period: March for monthly clients (Fractional Family Office) and Q1 for quarterly clients (Strategic / Access). Saves all scores with assessor set to &ldquo;AI&rdquo;.
         </p>
         <div className={`p-4 rounded-lg border ${darkMode ? "bg-slate-700 border-slate-600" : "bg-gray-50 border-gray-200"}`}>
           <button
@@ -1748,7 +1749,7 @@ function SettingsTab({ settings, onSave, onSync, onImport, onCSVImport, darkMode
             className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 ${bulkScoring ? "opacity-50" : ""} bg-purple-600 text-white hover:bg-purple-700`}
           >
             {bulkScoring ? <span className="animate-spin inline-block">{"\u21BB"}</span> : <span>{"\u2728"}</span>}
-            {bulkScoring ? `Scoring ${bulkProgress.done + 1} of ${bulkProgress.total}...` : "AI Score All Active Clients"}
+            {bulkScoring ? `Scoring ${bulkProgress.done + 1} of ${bulkProgress.total}...` : "AI Score All (Mar / Q1)"}
           </button>
 
           {bulkScoring && bulkProgress.current && (
