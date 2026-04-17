@@ -1319,13 +1319,15 @@ function NPSTab({ stats, npsFeedback, onAddFeedback, onImportSurveys, darkMode }
 }
 
 // ===== SETTINGS =====
-function SettingsTab({ settings, onSave, onSync, onImport, onCSVImport, darkMode, currentUser, clients, wows, onScoreAll }: {
+function SettingsTab({ settings, onSave, onSync, onImport, onCSVImport, darkMode, currentUser, clients, wows, onScoreAll, onClearAllScores, scoreCount }: {
   settings: Settings; onSave: (s: Settings) => void; onSync: () => void;
   onImport: (clients: Client[]) => Promise<number>;
   onCSVImport: (clients: Client[]) => void;
   darkMode?: boolean; currentUser?: UserProfile;
   clients: Client[]; wows: Wow[];
   onScoreAll: (scored: Score[]) => Promise<void>;
+  onClearAllScores: () => Promise<void>;
+  scoreCount: number;
 }) {
   const [sources, setSources] = useState<string[]>(settings.referralSources || REFERRAL_SOURCES);
   const [newSource, setNewSource] = useState("");
@@ -1352,6 +1354,25 @@ function SettingsTab({ settings, onSave, onSync, onImport, onCSVImport, darkMode
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number; current: string }>({ done: 0, total: 0, current: "" });
   const [bulkErrors, setBulkErrors] = useState<Array<{ client: string; error: string }>>([]);
   const [bulkResult, setBulkResult] = useState<string>("");
+
+  // Clear scores state
+  const [clearingScores, setClearingScores] = useState(false);
+  const [clearScoresResult, setClearScoresResult] = useState("");
+
+  const handleClearAllScores = async () => {
+    const input = prompt(`This will permanently delete all ${scoreCount} scores across every client. This cannot be undone.\n\nType DELETE to confirm:`);
+    if (input !== "DELETE") return;
+    setClearingScores(true);
+    setClearScoresResult("");
+    try {
+      await onClearAllScores();
+      setClearScoresResult(`Removed ${scoreCount} scores.`);
+    } catch (err) {
+      setClearScoresResult(`Failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setClearingScores(false);
+    }
+  };
 
   const handleScoreAll = async () => {
     const activeClients = (clients || []).filter(c => (c.engagementStatus || "Active") === "Active");
@@ -1758,6 +1779,26 @@ function SettingsTab({ settings, onSave, onSync, onImport, onCSVImport, darkMode
               </ul>
             </details>
           )}
+        </div>
+      </div>}
+
+      {/* Danger Zone: Clear All Scores */}
+      {canConfigureScoring(currentUser) && <div className={`pt-4 border-t ${darkMode ? "border-slate-700" : "border-gray-200"}`}>
+        <h4 className={`text-base font-semibold mb-1 text-red-600`}>Danger Zone</h4>
+        <p className={`text-xs mb-3 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>
+          Permanently remove all historical scores across every client. Clients, pods, NPS feedback, and wow moments are kept.
+        </p>
+        <div className={`p-4 rounded-lg border-2 ${darkMode ? "bg-red-950/30 border-red-900/60" : "bg-red-50 border-red-200"}`}>
+          <button
+            onClick={handleClearAllScores}
+            disabled={clearingScores || scoreCount === 0}
+            className={`px-4 py-2 rounded-lg text-sm font-medium ${clearingScores || scoreCount === 0 ? "opacity-50 cursor-not-allowed" : ""} bg-red-600 text-white hover:bg-red-700`}
+          >
+            {clearingScores ? "Removing..." : scoreCount === 0 ? "No scores to remove" : `Remove All ${scoreCount} Scores`}
+          </button>
+          {clearScoresResult && <div className={`mt-3 text-sm ${clearScoresResult.startsWith("Failed") ? "text-red-600" : "text-green-600"}`}>
+            {"\u2713"} {clearScoresResult}
+          </div>}
         </div>
       </div>}
 
@@ -2314,6 +2355,10 @@ export default function App() {
     await persist({ ...data, scores: merged });
   };
 
+  const handleClearAllScores = async () => {
+    await persist({ ...data, scores: [] });
+  };
+
   const handleCSVImport = async (clients: Client[]) => {
     const existing = Array.isArray(data.clients) ? data.clients : [];
     const mergedClients = [...existing, ...clients];
@@ -2416,7 +2461,7 @@ export default function App() {
         {tab === "referrals" && <ReferralsTab stats={stats} referrals={data.referrals || []} onAddRef={() => setView("addRef")} referralSources={getReferralSources(data.settings)} darkMode={darkMode} />}
         {tab === "activity" && <ActivityTab clients={visibleClients} scores={data.scores || []} wows={data.wows || []} npsFeedback={data.npsFeedback || []} currentUser={currentUser} darkMode={darkMode} settings={data.settings} />}
         {tab === "nps" && <NPSTab stats={stats} npsFeedback={data.npsFeedback || []} onAddFeedback={handleAddNPSFeedback} onImportSurveys={handleImportNPSSurveys} darkMode={darkMode} />}
-        {tab === "settings" && <SettingsTab settings={data.settings || { referralSources: REFERRAL_SOURCES }} onSave={handleSaveSettings} onSync={handleWealthboxSync} onImport={handleWealthboxImport} onCSVImport={handleCSVImport} darkMode={darkMode} currentUser={currentUser} clients={data.clients || []} wows={data.wows || []} onScoreAll={handleBulkAIScore} />}
+        {tab === "settings" && <SettingsTab settings={data.settings || { referralSources: REFERRAL_SOURCES }} onSave={handleSaveSettings} onSync={handleWealthboxSync} onImport={handleWealthboxImport} onCSVImport={handleCSVImport} darkMode={darkMode} currentUser={currentUser} clients={data.clients || []} wows={data.wows || []} onScoreAll={handleBulkAIScore} onClearAllScores={handleClearAllScores} scoreCount={(data.scores || []).length} />}
       </>}
 
       {view === "detail" && selectedStat && <ClientDetail client={selectedStat} scores={data.scores || []} wows={data.wows || []} referrals={data.referrals || []} onBack={back} onScore={() => setView("score")} onAddWow={() => setView("addWow")} onEditClient={() => setView("editClient")} onExportPDF={handleExportClientPDF} user={currentUser} darkMode={darkMode} settings={data.settings} />}
