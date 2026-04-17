@@ -292,20 +292,22 @@ function OverviewTab({ stats, onSelect, onAdd, user, darkMode, settings }: { sta
     if (search && !c.name.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   });
-  const scored = filtered.filter(c => c.latestScore != null);
+  // Stats are calculated on ACTIVE clients only (Paused/Offboarded excluded) for consistency with Revenue tab
+  const activeFiltered = filtered.filter(c => c.engagementStatus !== "Paused" && c.engagementStatus !== "Offboarded");
+  const scored = activeFiltered.filter(c => c.latestScore != null);
   const avg = scored.length ? scored.reduce((s, c) => s + (c.latestScore || 0), 0) / scored.length : 0;
   const h = scored.filter(c => c.status === "HEALTHY").length;
   const w = scored.filter(c => c.status === "WATCH").length;
   const r = scored.filter(c => c.status === "AT RISK").length;
   return <div className="space-y-5">
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
-      <StatCard label="Clients" value={filtered.length} darkMode={darkMode} />
-      <StatCard label="Monthly Rev" value={fmtM(filtered.reduce((s, c) => s + c.monthlyFee, 0))} color="#1B2A4A" darkMode={darkMode} />
+      <StatCard label="Clients" value={activeFiltered.length} darkMode={darkMode} />
+      <StatCard label="Monthly Rev" value={fmtM(activeFiltered.reduce((s, c) => s + c.monthlyFee, 0))} color="#1B2A4A" darkMode={darkMode} />
       <StatCard label="Avg Score" value={avg.toFixed(1)} color={sColor(getStatus(avg, settings)).tx} darkMode={darkMode} />
       <StatCard label="Healthy" value={h} color="#166534" sub={scored.length ? `${Math.round(h / scored.length * 100)}%` : ""} darkMode={darkMode} />
       <StatCard label="Watch" value={w} color="#854d0e" sub={scored.length ? `${Math.round(w / scored.length * 100)}%` : ""} darkMode={darkMode} />
       <StatCard label="At Risk" value={r} color="#991b1b" sub={scored.length ? `${Math.round(r / scored.length * 100)}%` : ""} darkMode={darkMode} />
-      <StatCard label="Unscored" value={filtered.length - scored.length} color="#6b7280" darkMode={darkMode} />
+      <StatCard label="Unscored" value={activeFiltered.length - scored.length} color="#6b7280" darkMode={darkMode} />
     </div>
     <div className="flex flex-wrap gap-2 items-center">
       <input className={`border rounded-lg px-3 py-1.5 text-sm w-full sm:flex-1 sm:min-w-48 ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200 placeholder-gray-400" : "border-gray-200 bg-white"}`} placeholder="Search..." value={search} onChange={e => setSearch(e.target.value)} />
@@ -458,10 +460,12 @@ function RankingTab({ clients, scores, onSelect, darkMode, settings }: { clients
 // ===== ADVISORS =====
 function AdvisorTab({ stats, darkMode, settings }: { stats: ClientStat[]; darkMode?: boolean; settings?: Settings }) {
   const data = useMemo(() => ADVISORS.map(adv => {
-    const cs = stats.filter(c => c.leadAdvisor === adv); const scored = cs.filter(c => c.latestScore != null);
+    const cs = stats.filter(c => c.leadAdvisor === adv && c.engagementStatus !== "Paused" && c.engagementStatus !== "Offboarded");
+    const scored = cs.filter(c => c.latestScore != null);
     const avg = scored.length ? scored.reduce((s, c) => s + (c.latestScore || 0), 0) / scored.length : 0;
     const h = scored.filter(c => c.status === "HEALTHY").length; const w = scored.filter(c => c.status === "WATCH").length; const r = scored.filter(c => c.status === "AT RISK").length;
-    const totalRev = cs.reduce((s, c) => s + c.monthlyFee, 0); const atRiskRev = cs.filter(c => c.status === "AT RISK" || c.status === "WATCH").reduce((s, c) => s + c.monthlyFee, 0);
+    const totalRev = cs.reduce((s, c) => s + c.monthlyFee, 0);
+    const atRiskRev = cs.filter(c => c.status === "AT RISK").reduce((s, c) => s + c.monthlyFee, 0);
     const dims = DIMENSIONS.map(d => { const vals = scored.map(c => (c.dims.find(x => x.name === d) || { avg: null }).avg).filter((v): v is number => v != null); return { name: d, avg: vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0 }; });
     return { adv, total: cs.length, scored: scored.length, avg, h, w, r, totalRev, atRiskRev, dims };
   }), [stats]);
@@ -547,13 +551,14 @@ function PodsTab({ stats, onSelect, darkMode, settings, onSaveSettings }: { stat
 
   const podData = useMemo(() => pods.map(pod => {
     const podClients = stats.filter(c => {
+      if (c.engagementStatus === "Paused" || c.engagementStatus === "Offboarded") return false;
       const cp = getPodForClient(c, settings);
       return cp?.id === pod.id;
     });
     const scored = podClients.filter(c => c.latestScore != null);
     const avgScore = scored.length ? scored.reduce((s, c) => s + (c.latestScore || 0), 0) / scored.length : 0;
     const totalMRR = podClients.reduce((s, c) => s + c.monthlyFee, 0);
-    const atRiskRev = podClients.filter(c => c.status === "AT RISK" || c.status === "WATCH").reduce((s, c) => s + c.monthlyFee, 0);
+    const atRiskRev = podClients.filter(c => c.status === "AT RISK").reduce((s, c) => s + c.monthlyFee, 0);
     const hCount = scored.filter(c => c.status === "HEALTHY").length;
     const wCount = scored.filter(c => c.status === "WATCH").length;
     const rCount = scored.filter(c => c.status === "AT RISK").length;
@@ -670,9 +675,10 @@ function TeamTab({ stats, onSelect, darkMode, settings }: { stats: ClientStat[];
     }
     Array.from(allNames).forEach(name => teamMembers.set(name, []));
 
-    // Assign clients to every individual appearing in the pod's roles
+    // Assign clients to every individual appearing in the pod's roles — active only
     for (const c of stats) {
       if (!c.pod) continue; // skip clients not assigned to a pod
+      if (c.engagementStatus === "Paused" || c.engagementStatus === "Offboarded") continue;
       const cp = pods.find(p => p.id === c.pod);
       if (!cp) continue;
       const podMembers = [
@@ -703,12 +709,13 @@ function TeamTab({ stats, onSelect, darkMode, settings }: { stats: ClientStat[];
 
   const [expanded, setExpanded] = useState<string | null>(null);
 
+  const activeStats = stats.filter(c => c.engagementStatus !== "Paused" && c.engagementStatus !== "Offboarded");
   return <div className="space-y-4">
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
       <StatCard label="Team Members" value={teamData.length} darkMode={darkMode} />
       <StatCard label="Avg Health Score" value={(() => { const s = teamData.filter(t => t.avgScore != null); return s.length ? (s.reduce((a, t) => a + (t.avgScore || 0), 0) / s.length).toFixed(1) : "N/A"; })()} darkMode={darkMode} />
-      <StatCard label="Total Clients" value={stats.length} darkMode={darkMode} />
-      <StatCard label="Total MRR" value={fmtM(stats.reduce((s, c) => s + c.monthlyFee, 0))} color="#1B2A4A" darkMode={darkMode} />
+      <StatCard label="Active Clients" value={activeStats.length} darkMode={darkMode} />
+      <StatCard label="Total MRR" value={fmtM(activeStats.reduce((s, c) => s + c.monthlyFee, 0))} color="#1B2A4A" darkMode={darkMode} />
     </div>
 
     <div className={`rounded-xl border overflow-hidden ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
@@ -964,15 +971,20 @@ function RevenueTab({ stats, darkMode, settings }: { stats: ClientStat[]; darkMo
     )}
 
     <div className={`rounded-xl border p-4 sm:p-5 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
-      <h3 className={`text-sm font-semibold mb-3 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>BY CLIENT</h3>
-      {[...activeClients].sort((a, b) => b.monthlyFee - a.monthlyFee).map(c => (
-        <div key={c.id} className="flex items-center gap-2 py-1">
+      <div className="flex items-baseline justify-between mb-3">
+        <h3 className={`text-sm font-semibold ${darkMode ? "text-gray-400" : "text-gray-500"}`}>BY CLIENT</h3>
+        <span className={`text-[10px] ${darkMode ? "text-gray-500" : "text-gray-400"}`}>Scale: $0 &ndash; $15K</span>
+      </div>
+      {[...activeClients].sort((a, b) => b.monthlyFee - a.monthlyFee).map(c => {
+        const BAR_MAX = 15000;
+        const pct = Math.min(100, (c.monthlyFee / BAR_MAX) * 100);
+        return <div key={c.id} className="flex items-center gap-2 py-1">
           <span className={`w-36 truncate text-sm ${darkMode ? "text-gray-300" : "text-gray-700"}`}>{c.name}</span>
-          <div className={`flex-1 h-3 rounded-full overflow-hidden ${darkMode ? "bg-slate-700" : "bg-gray-100"}`}><div className="h-full rounded-full" style={{ width: `${totalRev ? c.monthlyFee / totalRev * 100 : 0}%`, background: sColor(c.status).bd }} /></div>
+          <div className={`flex-1 h-3 rounded-full overflow-hidden ${darkMode ? "bg-slate-700" : "bg-gray-100"}`}><div className="h-full rounded-full" style={{ width: `${pct}%`, background: sColor(c.status).bd }} /></div>
           <span className={`w-14 text-right text-sm font-semibold ${darkMode ? "text-gray-200" : ""}`}>{fmtM(c.monthlyFee)}</span>
           <Badge status={c.status} sm />
-        </div>
-      ))}
+        </div>;
+      })}
     </div>
   </div>;
 }
