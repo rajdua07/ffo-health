@@ -602,26 +602,36 @@ function PodsTab({ stats, onSelect, darkMode, settings, onSaveSettings }: { stat
 function TeamTab({ stats, onSelect, darkMode, settings }: { stats: ClientStat[]; onSelect: (id: string) => void; darkMode?: boolean; settings?: Settings }) {
   const teamData = useMemo(() => {
     const pods = getPods(settings);
-    // Collect all unique team members from pod definitions
+    // A role string can hold multiple names like "Misha + Alex" — split on + or &
+    const splitNames = (s?: string): string[] => {
+      if (!s) return [];
+      return s.split(/\s*[+&]\s*/).map(n => n.trim()).filter(Boolean);
+    };
+
+    // Collect all unique team members from pod definitions (expanding multi-person roles)
     const teamMembers = new Map<string, ClientStat[]>();
     const allNames = new Set<string>();
     for (const pod of pods) {
-      if (pod.advisor) allNames.add(pod.advisor);
-      if (pod.wp) allNames.add(pod.wp);
-      if (pod.wpa) allNames.add(pod.wpa);
-      if (pod.partner) allNames.add(pod.partner);
+      splitNames(pod.advisor).forEach(n => allNames.add(n));
+      splitNames(pod.wp).forEach(n => allNames.add(n));
+      splitNames(pod.wpa).forEach(n => allNames.add(n));
+      splitNames(pod.partner).forEach(n => allNames.add(n));
     }
     Array.from(allNames).forEach(name => teamMembers.set(name, []));
 
-    // Assign clients to team members strictly via their explicit pod assignment
+    // Assign clients to every individual appearing in the pod's roles
     for (const c of stats) {
       if (!c.pod) continue; // skip clients not assigned to a pod
       const cp = pods.find(p => p.id === c.pod);
       if (!cp) continue;
-      const podMembers = [cp.advisor, cp.wp, cp.wpa, cp.partner].filter(Boolean) as string[];
+      const podMembers = [
+        ...splitNames(cp.advisor),
+        ...splitNames(cp.wp),
+        ...splitNames(cp.wpa),
+        ...splitNames(cp.partner),
+      ];
       for (const member of podMembers) {
         if (teamMembers.has(member)) {
-          // Avoid counting the same client twice for the same member
           const existing = teamMembers.get(member)!;
           if (!existing.some(e => e.id === c.id)) existing.push(c);
         }
