@@ -182,10 +182,22 @@ export async function POST(request: Request) {
       ? `${quarterNames[sMonth / 3]} ${sYear} (${periodStart.toLocaleString('en-US', { month: 'short' })} - ${new Date(sYear, sMonth + 2).toLocaleString('en-US', { month: 'short' })})`
       : `${periodStart.toLocaleString('en-US', { month: 'long' })} ${sYear}`;
 
+    // Trajectory context: two prior periods (2 months or 2 quarters back)
+    const trajectoryStart = new Date(sYear, sMonth - (periodMonths * 2), 1);
+    const trajectoryEnd = new Date(periodStart.getTime() - 1); // right before scoring period starts
+    const trajectoryLabel = periodMonths === 3
+      ? `${trajectoryStart.toLocaleString('en-US', { month: 'short' })} - ${new Date(periodStart.getFullYear(), periodStart.getMonth() - 1).toLocaleString('en-US', { month: 'short' })} ${trajectoryStart.getFullYear()}`
+      : `${trajectoryStart.toLocaleString('en-US', { month: 'short' })} - ${new Date(periodStart.getFullYear(), periodStart.getMonth() - 1).toLocaleString('en-US', { month: 'short', year: 'numeric' })}`;
+
     const inPeriod = (dateStr: string | undefined) => {
       if (!dateStr) return false;
       const d = new Date(dateStr);
       return d >= periodStart && d <= periodEnd;
+    };
+    const inTrajectory = (dateStr: string | undefined) => {
+      if (!dateStr) return false;
+      const d = new Date(dateStr);
+      return d >= trajectoryStart && d < periodStart;
     };
 
     // Fetch all data sources in parallel
@@ -198,12 +210,18 @@ export async function POST(request: Request) {
       getGoogleDriveTranscripts(googleDriveFolderId || ''),
     ]);
 
-    // Filter to scoring month
+    // Scoring period data
     const completedTasks = allCompletedTasks.filter((t: any) => inPeriod(t.due_date || t.updated_at));
     const openTasks = allOpenTasks; // open tasks are always relevant
     const events = allEvents.filter((e: any) => inPeriod(e.starts_at || e.created_at));
     const notes = allNotes.filter((n: any) => inPeriod(n.created_at));
     const slackMessages = allSlackMessages.filter(m => inPeriod(m.ts));
+
+    // Trajectory context — 2 prior periods (for momentum analysis only, not scored directly)
+    const priorCompletedTasks = allCompletedTasks.filter((t: any) => inTrajectory(t.due_date || t.updated_at));
+    const priorEvents = allEvents.filter((e: any) => inTrajectory(e.starts_at || e.created_at));
+    const priorNotes = allNotes.filter((n: any) => inTrajectory(n.created_at));
+    const priorSlackMessages = allSlackMessages.filter(m => inTrajectory(m.ts));
 
     // Strip HTML and normalize whitespace for task/event descriptions
     const cleanDesc = (d: any): string => {
@@ -238,6 +256,25 @@ export async function POST(request: Request) {
     const notesList = notes.map((n: any) =>
       `- ${new Date(n.created_at).toLocaleDateString()}: ${n.content.slice(0, 1000)}`
     ).join('\n') || 'None';
+
+    // Trajectory context lists (shorter summaries — these are for momentum only)
+    const priorCompletedList = priorCompletedTasks.map((t: any) => {
+      const desc = cleanDesc(t.description || t.description_html);
+      return `- ${t.name} — completed by ${resolveUserName(t.completer)} on ${new Date(t.due_date || t.updated_at || t.created_at || '').toLocaleDateString()}${desc ? ' | ' + desc.slice(0, 400) : ''}`;
+    }).join('\n') || 'None';
+
+    const priorEventsList = priorEvents.map((e: any) => {
+      const desc = cleanDesc(e.description);
+      return `- ${e.title} (${e.starts_at ? new Date(e.starts_at).toLocaleDateString() : 'no date'})${desc ? ': ' + desc.slice(0, 300) : ''}`;
+    }).join('\n') || 'None';
+
+    const priorNotesList = priorNotes.map((n: any) =>
+      `- ${new Date(n.created_at).toLocaleDateString()}: ${n.content.slice(0, 400)}`
+    ).join('\n') || 'None';
+
+    const priorSlackList = priorSlackMessages.slice(-40).map(m =>
+      `- ${m.author} (${new Date(m.ts).toLocaleDateString()}): ${m.text.slice(0, 200)}`
+    ).join('\n') || 'No prior Slack data';
 
     // Include full timestamps in Slack messages for response time analysis
     const slackList = slackMessages.map(m =>
@@ -330,6 +367,24 @@ ${transcriptList}
 ### Wow Moments (${periodWows.length})
 ${wowList}
 
+---
+
+## TRAJECTORY CONTEXT: Prior Two Periods (${trajectoryLabel})
+
+The following data is from the two periods BEFORE the scoring period. Use it for momentum analysis only — to see whether the client's engagement, velocity, sentiment, and behaviour are improving, steady, or declining relative to the scoring period. Do NOT score based on these events directly; they are context for trajectory-aware justifications.
+
+### Prior Completed Tasks (${priorCompletedTasks.length})
+${priorCompletedList}
+
+### Prior Meetings & Events (${priorEvents.length})
+${priorEventsList}
+
+### Prior CRM Notes (${priorNotes.length})
+${priorNotesList}
+
+### Prior Slack Activity (${priorSlackMessages.length} messages)
+${priorSlackList}
+
 ## Instructions
 
 Based on ALL the data above, provide scores for each of the 16 metrics. You MUST respond with ONLY a valid JSON object in this exact format — no other text, no markdown code fences:
@@ -351,6 +406,8 @@ Based on ALL the data above, provide scores for each of the 16 metrics. You MUST
 Each score must be an integer from 1 to 10. Score conservatively — use 5 when data is insufficient.
 
 CRITICAL: The "Description" field on each task contains rich context — team discussions, email recaps, client messages, internal notes, action item details. Read these descriptions carefully and use them as evidence when scoring. Don't just rely on task names.
+
+TRAJECTORY: Compare the scoring-period data against the TRAJECTORY CONTEXT (the two prior periods). Note whether engagement is accelerating/slowing, velocity is improving/stalling, sentiment is trending up/down. Reference this explicitly in the relevant dimension justifications (e.g. "Project Velocity has slowed relative to the prior two months — 3 milestones hit this month vs 7 and 8 in the prior months.")
 
 IMPORTANT: For each dimension justification, if there is insufficient data to confidently score any metrics in that dimension, explicitly say "ADVISOR INPUT NEEDED:" followed by which specific metrics the advisor should score manually and why. For example: "ADVISOR INPUT NEEDED: Meeting Attendance and Direct Feedback — no meeting or feedback data available for this period, advisor should score based on their direct experience."
 

@@ -1409,6 +1409,7 @@ function SettingsTab({ settings, onSave, onSync, onImport, onCSVImport, darkMode
           notes: result.observations || "",
           actionItems: result.actionItems || "",
           ts: new Date().toISOString(),
+          dimensionJustifications: result.dimensionJustifications && Object.keys(result.dimensionJustifications).length > 0 ? result.dimensionJustifications : undefined,
         };
         // Save immediately so progress is preserved even if the run is interrupted
         try {
@@ -1842,6 +1843,9 @@ function ClientDetail({ client, scores, wows, referrals, onBack, onScore, onAddW
   const [execLoading, setExecLoading] = useState(false);
   const [execError, setExecError] = useState("");
 
+  // History row expansion — shows per-dimension breakdown + justifications on click
+  const [expandedHistoryTs, setExpandedHistoryTs] = useState<string | null>(null);
+
   const handleLoadExecSummary = async () => {
     setExecLoading(true);
     setExecError("");
@@ -1983,10 +1987,63 @@ function ClientDetail({ client, scores, wows, referrals, onBack, onScore, onAddW
 
     <div className={`rounded-xl border p-4 sm:p-5 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-gray-200"}`}>
       <h3 className={`text-sm font-semibold mb-3 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>HISTORY</h3>
-      {[...cs].reverse().map((s, i) => { const score = calcScore(s.scores); const sst = getStatus(score, settings); return <div key={i} className={`border rounded-lg p-3 mb-2 ${darkMode ? "border-slate-700" : "border-gray-100"}`}>
-        <div className="flex justify-between mb-1"><div className="flex items-center gap-2"><span className={`font-medium text-sm ${darkMode ? "text-gray-200" : "text-gray-900"}`}>{MO[s.month]} {s.year}</span><Badge status={sst} sm /></div><span className="font-bold text-lg" style={{ color: sColor(sst).tx }}>{score?.toFixed(2)}</span></div>
-        {s.notes && <p className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-600"}`}>{s.notes}</p>}{s.actionItems && <p className={`text-xs font-medium ${darkMode ? "text-amber-400" : "text-amber-700"}`}>{s.actionItems}</p>}<div className={`text-[10px] mt-1 ${darkMode ? "text-gray-500" : "text-gray-400"}`}>By {s.assessor}</div>
-      </div>; })}
+      {[...cs].reverse().map((s, i) => {
+        const score = calcScore(s.scores);
+        const sst = getStatus(score, settings);
+        const rowKey = s.ts || `${s.year}-${s.month}-${i}`;
+        const expanded = expandedHistoryTs === rowKey;
+        const hasJustifications = s.dimensionJustifications && Object.keys(s.dimensionJustifications).length > 0;
+        return <div key={i} className={`border rounded-lg mb-2 overflow-hidden ${darkMode ? "border-slate-700" : "border-gray-100"}`}>
+          <button
+            onClick={() => setExpandedHistoryTs(expanded ? null : rowKey)}
+            className={`w-full text-left p-3 flex flex-col gap-1 transition-colors ${darkMode ? "hover:bg-slate-700/50" : "hover:bg-gray-50"}`}
+          >
+            <div className="flex justify-between items-start gap-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className={`font-medium text-sm ${darkMode ? "text-gray-200" : "text-gray-900"}`}>{MO[s.month]} {s.year}</span>
+                <Badge status={sst} sm />
+                {s.assessor === "AI" && <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${darkMode ? "bg-purple-900/40 text-purple-300" : "bg-purple-100 text-purple-700"}`}>AI</span>}
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="font-bold text-lg" style={{ color: sColor(sst).tx }}>{score?.toFixed(2)}</span>
+                <span className={`text-xs transition-transform ${expanded ? "rotate-180" : ""} ${darkMode ? "text-gray-500" : "text-gray-400"}`}>{"\u25BE"}</span>
+              </div>
+            </div>
+            {s.notes && <p className={`text-xs text-left ${darkMode ? "text-gray-400" : "text-gray-600"}`}>{s.notes}</p>}
+            {s.actionItems && <p className={`text-xs font-medium text-left ${darkMode ? "text-amber-400" : "text-amber-700"}`}>{s.actionItems}</p>}
+            <div className={`text-[10px] ${darkMode ? "text-gray-500" : "text-gray-400"}`}>By {s.assessor}</div>
+          </button>
+
+          {expanded && (
+            <div className={`px-3 pb-3 pt-1 border-t ${darkMode ? "border-slate-700 bg-slate-900/30" : "border-gray-100 bg-gray-50/60"}`}>
+              {DIMENSIONS.map(dim => {
+                const dimScore = dimAvg(s.scores, dim);
+                const dimMetrics = METRICS.filter(m => m.dim === dim);
+                const justification = s.dimensionJustifications?.[dim];
+                return <div key={dim} className="mt-3">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className={`text-xs font-semibold ${darkMode ? "text-gray-200" : "text-gray-800"}`}>{dim}</span>
+                    <span className="text-xs font-semibold" style={{ color: sColor(getStatus(dimScore, settings)).tx }}>{dimScore != null ? dimScore.toFixed(1) : "\u2014"}</span>
+                  </div>
+                  {justification && <p className={`text-[11px] mb-1.5 italic px-2.5 py-1.5 rounded ${darkMode ? "bg-purple-900/20 text-purple-300 border border-purple-800/30" : "bg-purple-50 text-purple-800 border border-purple-100"}`}>{justification}</p>}
+                  <div className="space-y-1">
+                    {dimMetrics.map(m => {
+                      const v = s.scores[m.id] ?? 5;
+                      return <div key={m.id} className="flex items-center gap-2">
+                        <span className={`text-[11px] flex-1 truncate ${darkMode ? "text-gray-400" : "text-gray-600"}`}>{m.name}</span>
+                        <MiniBar value={v} />
+                      </div>;
+                    })}
+                  </div>
+                </div>;
+              })}
+              {!hasJustifications && s.assessor !== "AI" && (
+                <p className={`text-[11px] mt-3 italic ${darkMode ? "text-gray-500" : "text-gray-400"}`}>No AI justifications saved for this score.</p>
+              )}
+            </div>
+          )}
+        </div>;
+      })}
       {cs.length === 0 && <p className="text-sm text-gray-400 text-center py-4">No scores yet.</p>}
     </div>
 
@@ -2068,7 +2125,7 @@ function ScoringForm({ client, existingScore, onSave, onCancel, darkMode, settin
         <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Action Items</label><textarea className={`w-full border rounded-lg p-2 text-sm h-16 ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={actions} onChange={e => setActions(e.target.value)} /></div>
       </div>
       <div className="flex gap-2 mt-4">
-        <button onClick={() => onSave({ clientId: client.id, year, month: effectiveMonth, scores: scoreVals, assessor, notes, actionItems: actions, ts: new Date().toISOString() })} disabled={!assessor} className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40">Save</button>
+        <button onClick={() => onSave({ clientId: client.id, year, month: effectiveMonth, scores: scoreVals, assessor, notes, actionItems: actions, ts: new Date().toISOString(), dimensionJustifications: Object.keys(dimJustifications).length > 0 ? dimJustifications : undefined })} disabled={!assessor} className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40">Save</button>
         <button onClick={onCancel} className={`border px-4 py-2 rounded-lg text-sm ${darkMode ? "border-slate-600 text-gray-300 hover:bg-slate-700" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>Cancel</button>
       </div>
     </div>

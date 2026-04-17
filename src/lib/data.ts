@@ -56,6 +56,7 @@ export interface Score {
   notes: string;
   actionItems: string;
   ts: string;
+  dimensionJustifications?: Record<string, string>; // AI-generated per-dimension justifications (optional)
 }
 
 export interface NPSFeedback {
