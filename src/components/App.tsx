@@ -1319,11 +1319,13 @@ function NPSTab({ stats, npsFeedback, onAddFeedback, onImportSurveys, darkMode }
 }
 
 // ===== SETTINGS =====
-function SettingsTab({ settings, onSave, onSync, onImport, onCSVImport, darkMode, currentUser }: {
+function SettingsTab({ settings, onSave, onSync, onImport, onCSVImport, darkMode, currentUser, clients, wows, onScoreAll }: {
   settings: Settings; onSave: (s: Settings) => void; onSync: () => void;
   onImport: (clients: Client[]) => Promise<number>;
   onCSVImport: (clients: Client[]) => void;
   darkMode?: boolean; currentUser?: UserProfile;
+  clients: Client[]; wows: Wow[];
+  onScoreAll: (scored: Score[]) => Promise<void>;
 }) {
   const [sources, setSources] = useState<string[]>(settings.referralSources || REFERRAL_SOURCES);
   const [newSource, setNewSource] = useState("");
@@ -1344,6 +1346,69 @@ function SettingsTab({ settings, onSave, onSync, onImport, onCSVImport, darkMode
   const lockedWeights = getEffectiveWeights(settings);
   const [scAtRisk, setScAtRisk] = useState(curAtRisk);
   const [scWatch, setScWatch] = useState(curWatch);
+
+  // Bulk AI scoring state
+  const [bulkScoring, setBulkScoring] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number; current: string }>({ done: 0, total: 0, current: "" });
+  const [bulkErrors, setBulkErrors] = useState<Array<{ client: string; error: string }>>([]);
+  const [bulkResult, setBulkResult] = useState<string>("");
+
+  const handleScoreAll = async () => {
+    const activeClients = (clients || []).filter(c => (c.engagementStatus || "Active") === "Active");
+    if (activeClients.length === 0) return;
+    if (!confirm(`Run AI scoring for ${activeClients.length} active clients? This may take several minutes.`)) return;
+
+    setBulkScoring(true);
+    setBulkErrors([]);
+    setBulkResult("");
+    setBulkProgress({ done: 0, total: activeClients.length, current: "" });
+
+    const now = new Date();
+    const scored: Score[] = [];
+    const errors: Array<{ client: string; error: string }> = [];
+
+    for (let i = 0; i < activeClients.length; i++) {
+      const c = activeClients[i];
+      setBulkProgress({ done: i, total: activeClients.length, current: c.name });
+
+      const isQuarterly = SCORING_FREQUENCY[c.tier] === "quarterly";
+      const scoreMonth = isQuarterly ? quarterStartMonth(quarterFromMonth(now.getMonth())) : now.getMonth();
+      const scoreYear = now.getFullYear();
+
+      try {
+        const clientWows = (wows || []).filter(w => w.clientId === c.id);
+        const result = await fetchAIScore(c.name, c.wealthboxId, c.slackChannelId, c.googleDriveFolderId, clientWows, scoreMonth, scoreYear);
+        scored.push({
+          clientId: c.id,
+          year: scoreYear,
+          month: scoreMonth,
+          scores: result.scores,
+          assessor: "AI",
+          notes: result.observations || "",
+          actionItems: result.actionItems || "",
+          ts: new Date().toISOString(),
+        });
+      } catch (err) {
+        errors.push({ client: c.name, error: err instanceof Error ? err.message : "Unknown error" });
+      }
+    }
+
+    setBulkProgress({ done: activeClients.length, total: activeClients.length, current: "" });
+    setBulkErrors(errors);
+
+    if (scored.length > 0) {
+      try {
+        await onScoreAll(scored);
+        setBulkResult(`Scored ${scored.length} of ${activeClients.length} clients${errors.length > 0 ? ` (${errors.length} failed)` : ""}.`);
+      } catch (err) {
+        setBulkResult(`Scored ${scored.length} clients but failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
+      }
+    } else {
+      setBulkResult(`No scores generated. ${errors.length} errors.`);
+    }
+
+    setBulkScoring(false);
+  };
 
   const addSource = () => {
     if (newSource.trim() && !sources.includes(newSource.trim())) {
@@ -1646,6 +1711,53 @@ function SettingsTab({ settings, onSave, onSync, onImport, onCSVImport, darkMode
               </div>
             ))}
           </div>
+        </div>
+      </div>}
+
+      {/* Bulk AI Scoring */}
+      {canConfigureScoring(currentUser) && <div className={`pt-4 border-t ${darkMode ? "border-slate-700" : "border-gray-200"}`}>
+        <h4 className={`text-base font-semibold mb-1 ${darkMode ? "text-gray-100" : "text-gray-900"}`}>Bulk AI Scoring</h4>
+        <p className={`text-xs mb-3 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>
+          Runs AI scoring for every Active client using their current scoring period (monthly for Fractional Family Office, quarterly for Strategic / Access). Saves all scores with assessor set to &ldquo;AI&rdquo;.
+        </p>
+        <div className={`p-4 rounded-lg border ${darkMode ? "bg-slate-700 border-slate-600" : "bg-gray-50 border-gray-200"}`}>
+          <button
+            onClick={handleScoreAll}
+            disabled={bulkScoring}
+            className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 ${bulkScoring ? "opacity-50" : ""} bg-purple-600 text-white hover:bg-purple-700`}
+          >
+            {bulkScoring ? <span className="animate-spin inline-block">{"\u21BB"}</span> : <span>{"\u2728"}</span>}
+            {bulkScoring ? `Scoring ${bulkProgress.done + 1} of ${bulkProgress.total}...` : "AI Score All Active Clients"}
+          </button>
+
+          {bulkScoring && bulkProgress.current && (
+            <div className={`mt-3 text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>
+              Currently scoring: <span className={`font-semibold ${darkMode ? "text-gray-200" : "text-gray-800"}`}>{bulkProgress.current}</span>
+            </div>
+          )}
+
+          {bulkScoring && bulkProgress.total > 0 && (
+            <div className={`mt-3 h-2 rounded-full overflow-hidden ${darkMode ? "bg-slate-600" : "bg-gray-200"}`}>
+              <div className="h-full bg-purple-500 transition-all duration-300" style={{ width: `${(bulkProgress.done / bulkProgress.total) * 100}%` }} />
+            </div>
+          )}
+
+          {bulkResult && !bulkScoring && (
+            <div className={`mt-3 text-sm ${bulkErrors.length > 0 ? "text-amber-600" : "text-green-600"}`}>
+              {"\u2713"} {bulkResult}
+            </div>
+          )}
+
+          {bulkErrors.length > 0 && !bulkScoring && (
+            <details className="mt-3">
+              <summary className={`text-xs cursor-pointer ${darkMode ? "text-gray-400 hover:text-gray-300" : "text-gray-500 hover:text-gray-700"}`}>
+                {bulkErrors.length} error{bulkErrors.length === 1 ? "" : "s"}
+              </summary>
+              <ul className={`mt-2 ml-4 text-xs space-y-1 ${darkMode ? "text-gray-400" : "text-gray-600"}`}>
+                {bulkErrors.map((e, i) => <li key={i}><span className="font-medium">{e.client}:</span> {e.error}</li>)}
+              </ul>
+            </details>
+          )}
         </div>
       </div>}
 
@@ -2191,6 +2303,17 @@ export default function App() {
     await persist({ ...data, settings });
   };
 
+  const handleBulkAIScore = async (newScores: Score[]) => {
+    const existing = Array.isArray(data.scores) ? data.scores : [];
+    const merged = [...existing];
+    // Replace an existing score for the same client/year/month, otherwise append
+    for (const ns of newScores) {
+      const idx = merged.findIndex(s => s.clientId === ns.clientId && s.year === ns.year && s.month === ns.month);
+      if (idx >= 0) merged[idx] = ns; else merged.push(ns);
+    }
+    await persist({ ...data, scores: merged });
+  };
+
   const handleCSVImport = async (clients: Client[]) => {
     const existing = Array.isArray(data.clients) ? data.clients : [];
     const mergedClients = [...existing, ...clients];
@@ -2293,7 +2416,7 @@ export default function App() {
         {tab === "referrals" && <ReferralsTab stats={stats} referrals={data.referrals || []} onAddRef={() => setView("addRef")} referralSources={getReferralSources(data.settings)} darkMode={darkMode} />}
         {tab === "activity" && <ActivityTab clients={visibleClients} scores={data.scores || []} wows={data.wows || []} npsFeedback={data.npsFeedback || []} currentUser={currentUser} darkMode={darkMode} settings={data.settings} />}
         {tab === "nps" && <NPSTab stats={stats} npsFeedback={data.npsFeedback || []} onAddFeedback={handleAddNPSFeedback} onImportSurveys={handleImportNPSSurveys} darkMode={darkMode} />}
-        {tab === "settings" && <SettingsTab settings={data.settings || { referralSources: REFERRAL_SOURCES }} onSave={handleSaveSettings} onSync={handleWealthboxSync} onImport={handleWealthboxImport} onCSVImport={handleCSVImport} darkMode={darkMode} currentUser={currentUser} />}
+        {tab === "settings" && <SettingsTab settings={data.settings || { referralSources: REFERRAL_SOURCES }} onSave={handleSaveSettings} onSync={handleWealthboxSync} onImport={handleWealthboxImport} onCSVImport={handleCSVImport} darkMode={darkMode} currentUser={currentUser} clients={data.clients || []} wows={data.wows || []} onScoreAll={handleBulkAIScore} />}
       </>}
 
       {view === "detail" && selectedStat && <ClientDetail client={selectedStat} scores={data.scores || []} wows={data.wows || []} referrals={data.referrals || []} onBack={back} onScore={() => setView("score")} onAddWow={() => setView("addWow")} onEditClient={() => setView("editClient")} onExportPDF={handleExportClientPDF} user={currentUser} darkMode={darkMode} settings={data.settings} />}
