@@ -1835,9 +1835,9 @@ function SettingsTab({ settings, onSave, onSync, onImport, onCSVImport, darkMode
 }
 
 // ===== CLIENT DETAIL =====
-function ClientDetail({ client, scores, wows, referrals, onBack, onScore, onAddWow, onEditClient, onExportPDF, user, darkMode, settings }: {
+function ClientDetail({ client, scores, wows, referrals, onBack, onScore, onEditScore, onAddWow, onEditClient, onExportPDF, user, darkMode, settings }: {
   client: ClientStat; scores: Score[]; wows: Wow[]; referrals: Referral[];
-  onBack: () => void; onScore: () => void; onAddWow: () => void; onEditClient: () => void; onExportPDF: () => void; user?: UserProfile; darkMode?: boolean; settings?: Settings;
+  onBack: () => void; onScore: () => void; onEditScore: (score: Score) => void; onAddWow: () => void; onEditClient: () => void; onExportPDF: () => void; user?: UserProfile; darkMode?: boolean; settings?: Settings;
 }) {
   const cs = (scores || []).filter(s => s.clientId === client.id).sort((a, b) => (a.year * 12 + a.month) - (b.year * 12 + b.month));
   const latest = cs.length > 0 ? cs[cs.length - 1] : null;
@@ -2041,9 +2041,9 @@ function ClientDetail({ client, scores, wows, referrals, onBack, onScore, onAddW
                   <div className="space-y-1">
                     {dimMetrics.map(m => {
                       const v = s.scores[m.id] ?? 5;
-                      return <div key={m.id} className="flex items-center gap-2">
-                        <span className={`text-[11px] flex-1 truncate ${darkMode ? "text-gray-400" : "text-gray-600"}`}>{m.name}</span>
-                        <MiniBar value={v} />
+                      return <div key={m.id} className="flex items-center gap-3">
+                        <span className={`text-[11px] w-44 shrink-0 truncate ${darkMode ? "text-gray-400" : "text-gray-600"}`}>{m.name}</span>
+                        <div className="flex-1 min-w-0"><MiniBar value={v} /></div>
                       </div>;
                     })}
                   </div>
@@ -2051,6 +2051,16 @@ function ClientDetail({ client, scores, wows, referrals, onBack, onScore, onAddW
               })}
               {!hasJustifications && s.assessor !== "AI" && (
                 <p className={`text-[11px] mt-3 italic ${darkMode ? "text-gray-500" : "text-gray-400"}`}>No AI justifications saved for this score.</p>
+              )}
+              {canScore(user) && (
+                <div className="mt-3 flex justify-end">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onEditScore(s); }}
+                    className="text-xs bg-blue-600 text-white px-3 py-1.5 rounded-lg font-medium hover:bg-blue-700"
+                  >
+                    Edit this score
+                  </button>
+                </div>
               )}
             </div>
           )}
@@ -2073,7 +2083,7 @@ function ClientDetail({ client, scores, wows, referrals, onBack, onScore, onAddW
 }
 
 // ===== SCORING FORM =====
-function ScoringForm({ client, existingScore, onSave, onCancel, darkMode, settings, wows }: { client: Client; existingScore?: Score; onSave: (s: Score) => void; onCancel: () => void; darkMode?: boolean; settings?: Settings; wows?: Wow[] }) {
+function ScoringForm({ client, existingScore, onSave, onCancel, darkMode, settings, wows, currentUser }: { client: Client; existingScore?: Score; onSave: (s: Score) => void; onCancel: () => void; darkMode?: boolean; settings?: Settings; wows?: Wow[]; currentUser?: UserProfile }) {
   const now = new Date();
   const isQuarterly = SCORING_FREQUENCY[client.tier] === "quarterly";
   const [month, setMonth] = useState(existingScore?.month ?? (isQuarterly ? quarterStartMonth(quarterFromMonth(now.getMonth())) : now.getMonth()));
@@ -2085,13 +2095,31 @@ function ScoringForm({ client, existingScore, onSave, onCancel, darkMode, settin
   const [actions, setActions] = useState(existingScore?.actionItems ?? "");
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState("");
-  const [dimJustifications, setDimJustifications] = useState<Record<string, string>>({});
+  const [dimJustifications, setDimJustifications] = useState<Record<string, string>>(existingScore?.dimensionJustifications || {});
+
+  // Baseline tracking — the scores against which "edits" are measured.
+  // If we're editing an existing score, that's the baseline. Otherwise it's null until AI runs.
+  const [baselineScores, setBaselineScores] = useState<number[] | null>(existingScore?.scores ? [...existingScore.scores] : null);
+  const [baselineAssessor] = useState<string>(existingScore?.assessor || "");
+  const [changeExplanation, setChangeExplanation] = useState("");
+
   const weighted = calcScore(scoreVals); const status = getStatus(weighted, settings);
   const upd = (i: number, v: string) => { const n = [...scoreVals]; n[i] = Math.max(1, Math.min(10, Number(v) || 5)); setScoreVals(n); };
   const effectiveWeights = getEffectiveWeights(settings);
 
   // For quarterly, the score stores the quarter start month
   const effectiveMonth = isQuarterly ? quarterStartMonth(quarter) : month;
+
+  // Detect which metrics have changed vs baseline
+  const changedMetrics = useMemo(() => {
+    if (!baselineScores) return [] as { id: number; name: string; from: number; to: number }[];
+    return METRICS
+      .map(m => ({ id: m.id, name: m.name, from: baselineScores[m.id] ?? 5, to: scoreVals[m.id] ?? 5 }))
+      .filter(m => m.from !== m.to);
+  }, [baselineScores, scoreVals]);
+
+  const hasChanges = changedMetrics.length > 0;
+  const requiresExplanation = hasChanges && !!baselineScores;
 
   const handleAIScore = async () => {
     setAiLoading(true); setAiError("");
@@ -2103,6 +2131,9 @@ function ScoringForm({ client, existingScore, onSave, onCancel, darkMode, settin
       setActions(result.actionItems);
       setDimJustifications(result.dimensionJustifications || {});
       setAssessor("AI");
+      // AI-generated scores become the new baseline; subsequent edits will require explanation
+      setBaselineScores([...result.scores]);
+      setChangeExplanation("");
     } catch (err) {
       setAiError(err instanceof Error ? err.message : "AI scoring failed");
     } finally { setAiLoading(false); }
@@ -2136,8 +2167,61 @@ function ScoringForm({ client, existingScore, onSave, onCancel, darkMode, settin
         <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Observations</label><textarea className={`w-full border rounded-lg p-2 text-sm h-20 ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={notes} onChange={e => setNotes(e.target.value)} /></div>
         <div><label className={`text-xs block mb-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>Action Items</label><textarea className={`w-full border rounded-lg p-2 text-sm h-16 ${darkMode ? "bg-slate-700 border-slate-600 text-gray-200" : "border-gray-200 bg-white"}`} value={actions} onChange={e => setActions(e.target.value)} /></div>
       </div>
+
+      {requiresExplanation && (
+        <div className={`mt-4 p-4 rounded-lg border-2 ${darkMode ? "bg-amber-950/30 border-amber-800/60" : "bg-amber-50 border-amber-300"}`}>
+          <div className={`text-sm font-semibold mb-1 ${darkMode ? "text-amber-300" : "text-amber-800"}`}>
+            {"\u26A0"} You've changed {changedMetrics.length} score{changedMetrics.length === 1 ? "" : "s"} from the {baselineAssessor === "AI" ? "AI-generated" : "original"} baseline
+          </div>
+          <details className="mb-3">
+            <summary className={`text-xs cursor-pointer ${darkMode ? "text-amber-400" : "text-amber-700"}`}>View changes</summary>
+            <ul className={`mt-2 ml-4 text-xs space-y-1 ${darkMode ? "text-amber-200" : "text-amber-900"}`}>
+              {changedMetrics.map(c => (
+                <li key={c.id}><span className="font-medium">{c.name}:</span> {c.from} {"\u2192"} {c.to}</li>
+              ))}
+            </ul>
+          </details>
+          <label className={`text-xs block mb-1 font-semibold ${darkMode ? "text-amber-300" : "text-amber-800"}`}>
+            Explanation for the change <span className="text-red-600">*</span>
+          </label>
+          <textarea
+            className={`w-full border rounded-lg p-2 text-sm h-20 ${darkMode ? "bg-slate-700 border-amber-800 text-gray-200" : "border-amber-300 bg-white"}`}
+            value={changeExplanation}
+            onChange={e => setChangeExplanation(e.target.value)}
+            placeholder="Why are you adjusting the scores? (required — logged to the score notes for accountability)"
+          />
+        </div>
+      )}
+
       <div className="flex gap-2 mt-4">
-        <button onClick={() => onSave({ clientId: client.id, year, month: effectiveMonth, scores: scoreVals, assessor, notes, actionItems: actions, ts: new Date().toISOString(), dimensionJustifications: Object.keys(dimJustifications).length > 0 ? dimJustifications : undefined })} disabled={!assessor} className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40">Save</button>
+        <button
+          onClick={() => {
+            // If edits were made against a baseline, prepend an audit log entry to the notes
+            let finalNotes = notes;
+            if (requiresExplanation && changeExplanation.trim()) {
+              const who = currentUser?.advisorName || currentUser?.name || assessor || "User";
+              const when = new Date().toLocaleString();
+              const diffSummary = changedMetrics.map(c => `${c.name} ${c.from}\u2192${c.to}`).join(", ");
+              const editBlock = `[Edit by ${who} on ${when}] Changed: ${diffSummary}. Reason: ${changeExplanation.trim()}`;
+              finalNotes = editBlock + (notes ? "\n\n" + notes : "");
+            }
+            onSave({
+              clientId: client.id,
+              year,
+              month: effectiveMonth,
+              scores: scoreVals,
+              assessor,
+              notes: finalNotes,
+              actionItems: actions,
+              ts: new Date().toISOString(),
+              dimensionJustifications: Object.keys(dimJustifications).length > 0 ? dimJustifications : undefined,
+            });
+          }}
+          disabled={!assessor || (requiresExplanation && !changeExplanation.trim())}
+          className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40"
+        >
+          Save
+        </button>
         <button onClick={onCancel} className={`border px-4 py-2 rounded-lg text-sm ${darkMode ? "border-slate-600 text-gray-300 hover:bg-slate-700" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>Cancel</button>
       </div>
     </div>
@@ -2271,6 +2355,10 @@ export default function App() {
 
   // For baseline auto-advance
   const [baselineAutoAdvance, setBaselineAutoAdvance] = useState(false);
+
+  // For editing a specific historical score — when set, ScoringForm loads THIS score
+  // instead of auto-finding the current period's score.
+  const [editingScore, setEditingScore] = useState<Score | null>(null);
 
   useEffect(() => {
     loadData().then(d => {
@@ -2538,13 +2626,22 @@ export default function App() {
         {tab === "settings" && <SettingsTab settings={data.settings || { referralSources: REFERRAL_SOURCES }} onSave={handleSaveSettings} onSync={handleWealthboxSync} onImport={handleWealthboxImport} onCSVImport={handleCSVImport} darkMode={darkMode} currentUser={currentUser} clients={data.clients || []} wows={data.wows || []} onScoreAll={handleBulkAIScore} onClearAllScores={handleClearAllScores} scoreCount={(data.scores || []).length} />}
       </>}
 
-      {view === "detail" && selectedStat && <ClientDetail client={selectedStat} scores={data.scores || []} wows={data.wows || []} referrals={data.referrals || []} onBack={back} onScore={() => setView("score")} onAddWow={() => setView("addWow")} onEditClient={() => setView("editClient")} onExportPDF={handleExportClientPDF} user={currentUser} darkMode={darkMode} settings={data.settings} />}
-      {view === "score" && selected && <ScoringForm client={selected} existingScore={(data.scores || []).find(s => {
-        if (s.clientId !== selectedId || s.year !== new Date().getFullYear()) return false;
-        const freq = SCORING_FREQUENCY[selected.tier];
-        if (freq === "quarterly") return quarterFromMonth(s.month) === quarterFromMonth(new Date().getMonth());
-        return s.month === new Date().getMonth();
-      })} onSave={handleSaveScore} onCancel={() => { setBaselineAutoAdvance(false); if (selectedId) setView("detail"); else { setView("dashboard"); setTab("overview"); } }} darkMode={darkMode} settings={data.settings} wows={data.wows || []} />}
+      {view === "detail" && selectedStat && <ClientDetail client={selectedStat} scores={data.scores || []} wows={data.wows || []} referrals={data.referrals || []} onBack={back} onScore={() => { setEditingScore(null); setView("score"); }} onEditScore={(s) => { setEditingScore(s); setView("score"); }} onAddWow={() => setView("addWow")} onEditClient={() => setView("editClient")} onExportPDF={handleExportClientPDF} user={currentUser} darkMode={darkMode} settings={data.settings} />}
+      {view === "score" && selected && <ScoringForm
+        client={selected}
+        existingScore={editingScore || (data.scores || []).find(s => {
+          if (s.clientId !== selectedId || s.year !== new Date().getFullYear()) return false;
+          const freq = SCORING_FREQUENCY[selected.tier];
+          if (freq === "quarterly") return quarterFromMonth(s.month) === quarterFromMonth(new Date().getMonth());
+          return s.month === new Date().getMonth();
+        })}
+        onSave={(score) => { handleSaveScore(score); setEditingScore(null); }}
+        onCancel={() => { setBaselineAutoAdvance(false); setEditingScore(null); if (selectedId) setView("detail"); else { setView("dashboard"); setTab("overview"); } }}
+        darkMode={darkMode}
+        settings={data.settings}
+        wows={data.wows || []}
+        currentUser={currentUser}
+      />}
       {view === "addClient" && <ClientForm onSave={handleSaveClient} onCancel={back} referralSources={getReferralSources(data.settings)} darkMode={darkMode} settings={data.settings} />}
       {view === "editClient" && selected && <ClientForm client={selected} onSave={handleSaveClient} onCancel={() => setView("detail")} referralSources={getReferralSources(data.settings)} darkMode={darkMode} settings={data.settings} />}
       {view === "addWow" && selected && <WowForm clientId={selectedId!} onSave={handleSaveWow} onCancel={() => setView("detail")} darkMode={darkMode} />}
