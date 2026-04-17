@@ -2171,7 +2171,7 @@ function ScoringForm({ client, existingScore, onSave, onCancel, darkMode, settin
       {requiresExplanation && (
         <div className={`mt-4 p-4 rounded-lg border-2 ${darkMode ? "bg-amber-950/30 border-amber-800/60" : "bg-amber-50 border-amber-300"}`}>
           <div className={`text-sm font-semibold mb-1 ${darkMode ? "text-amber-300" : "text-amber-800"}`}>
-            {"\u26A0"} You've changed {changedMetrics.length} score{changedMetrics.length === 1 ? "" : "s"} from the {baselineAssessor === "AI" ? "AI-generated" : "original"} baseline
+            {"\u26A0"} You&apos;ve changed {changedMetrics.length} score{changedMetrics.length === 1 ? "" : "s"} from the {baselineAssessor === "AI" ? "AI-generated" : "original"} baseline
           </div>
           <details className="mb-3">
             <summary className={`text-xs cursor-pointer ${darkMode ? "text-amber-400" : "text-amber-700"}`}>View changes</summary>
