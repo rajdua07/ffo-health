@@ -1665,7 +1665,7 @@ function ClientDetail({ client, scores, wows, referrals, onBack, onScore, onAddW
         <div className="flex items-center gap-2 sm:gap-3"><ScoreCircle score={ls} size={48} settings={settings} /><div><Badge status={st} /><div className="flex items-center gap-1 mt-1"><TrendArrow cur={ls} prev={ps} /><span className="text-xs text-gray-400 hidden sm:inline">vs prior</span></div></div></div>
       </div>
       <div className="flex gap-2 mt-4 flex-wrap">
-        {canScore(user) && <button onClick={onScore} className="bg-blue-600 text-white px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium hover:bg-blue-700">Score This Month</button>}
+        {canScore(user) && <button onClick={onScore} className="bg-blue-600 text-white px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium hover:bg-blue-700">+ Score</button>}
         {canScore(user) && <button onClick={onAddWow} className="bg-amber-500 text-white px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium hover:bg-amber-600">+ Wow</button>}
         {canEdit(user) && <button onClick={onEditClient} className={`border text-gray-600 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm hover:bg-gray-50 ${darkMode ? "border-slate-600 text-gray-300 hover:bg-slate-700" : "border-gray-200"}`}>Edit</button>}
         {canExport(user) && <button onClick={onExportPDF} className="border border-blue-200 text-blue-600 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm hover:bg-blue-50 font-medium">Export PDF</button>}
