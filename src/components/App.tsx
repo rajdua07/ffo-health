@@ -730,10 +730,27 @@ function TeamTab({ stats, onSelect, darkMode, settings }: { stats: ClientStat[];
           <th className={`text-right px-4 py-2.5 text-xs font-semibold ${darkMode ? "text-gray-300" : "text-gray-600"}`}>MRR</th>
         </tr></thead>
         <tbody>
-          {teamData.map(tm => (
+          {(() => {
+            // Assign ranks to top 3 distinct avg scores (ties share the same medal)
+            const ranked = teamData.filter(t => t.avgScore != null);
+            const medalByName: Record<string, string> = {};
+            let rank = 0;
+            let lastScore: number | null = null;
+            for (const t of ranked) {
+              const s = t.avgScore as number;
+              if (lastScore === null || s < lastScore) {
+                rank++;
+                lastScore = s;
+              }
+              if (rank > 3) break;
+              medalByName[t.name] = rank === 1 ? "\uD83E\uDD47" : rank === 2 ? "\uD83E\uDD48" : "\uD83E\uDD49";
+            }
+            return teamData.map(tm => {
+              const medal = medalByName[tm.name];
+              return (
             <Fragment key={tm.name}>
               <tr className={`border-t cursor-pointer ${darkMode ? "border-slate-700 hover:bg-slate-700" : "border-gray-100 hover:bg-gray-50"}`} onClick={() => setExpanded(expanded === tm.name ? null : tm.name)}>
-                <td className={`px-4 py-3 font-medium ${darkMode ? "text-gray-200" : "text-gray-900"}`}>{tm.name}</td>
+                <td className={`px-4 py-3 font-medium ${darkMode ? "text-gray-200" : "text-gray-900"}`}>{medal ? <span className="mr-1.5 text-base align-middle">{medal}</span> : null}{tm.name}</td>
                 <td className={`text-center px-2 py-3 ${darkMode ? "text-gray-300" : "text-gray-600"}`}>{tm.clients.length}</td>
                 <td className="px-2 py-3"><div className="flex justify-center"><ScoreCircle score={tm.avgScore} size={32} settings={settings} /></div></td>
                 <td className={`text-center px-2 py-3 hidden sm:table-cell text-green-600 font-semibold`}>{tm.healthyCount}</td>
@@ -754,7 +771,9 @@ function TeamTab({ stats, onSelect, darkMode, settings }: { stats: ClientStat[];
                 </div>
               </td></tr>}
             </Fragment>
-          ))}
+              );
+            });
+          })()}
         </tbody>
       </table>
     </div>
