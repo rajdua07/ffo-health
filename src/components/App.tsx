@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback, useMemo, Fragment } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "react";
 import {
   AppData, Client, Score, Wow, Referral, ClientStat, UserProfile, Settings,
   NPSFeedback, Pod, ExecSummary, ScoringConfig,
@@ -1325,7 +1325,7 @@ function SettingsTab({ settings, onSave, onSync, onImport, onCSVImport, darkMode
   onCSVImport: (clients: Client[]) => void;
   darkMode?: boolean; currentUser?: UserProfile;
   clients: Client[]; wows: Wow[];
-  onScoreAll: (scored: Score[]) => Promise<void>;
+  onScoreAll: (score: Score) => Promise<void>;
   onClearAllScores: () => Promise<void>;
   scoreCount: number;
 }) {
@@ -1385,8 +1385,8 @@ function SettingsTab({ settings, onSave, onSync, onImport, onCSVImport, darkMode
     setBulkProgress({ done: 0, total: activeClients.length, current: "" });
 
     const now = new Date();
-    const scored: Score[] = [];
     const errors: Array<{ client: string; error: string }> = [];
+    let savedCount = 0;
 
     for (let i = 0; i < activeClients.length; i++) {
       const c = activeClients[i];
@@ -1400,7 +1400,7 @@ function SettingsTab({ settings, onSave, onSync, onImport, onCSVImport, darkMode
       try {
         const clientWows = (wows || []).filter(w => w.clientId === c.id);
         const result = await fetchAIScore(c.name, c.wealthboxId, c.slackChannelId, c.googleDriveFolderId, clientWows, scoreMonth, scoreYear);
-        scored.push({
+        const score: Score = {
           clientId: c.id,
           year: scoreYear,
           month: scoreMonth,
@@ -1409,7 +1409,14 @@ function SettingsTab({ settings, onSave, onSync, onImport, onCSVImport, darkMode
           notes: result.observations || "",
           actionItems: result.actionItems || "",
           ts: new Date().toISOString(),
-        });
+        };
+        // Save immediately so progress is preserved even if the run is interrupted
+        try {
+          await onScoreAll(score);
+          savedCount++;
+        } catch (saveErr) {
+          errors.push({ client: c.name, error: `Scored but failed to save: ${saveErr instanceof Error ? saveErr.message : "Unknown error"}` });
+        }
       } catch (err) {
         errors.push({ client: c.name, error: err instanceof Error ? err.message : "Unknown error" });
       }
@@ -1417,17 +1424,9 @@ function SettingsTab({ settings, onSave, onSync, onImport, onCSVImport, darkMode
 
     setBulkProgress({ done: activeClients.length, total: activeClients.length, current: "" });
     setBulkErrors(errors);
-
-    if (scored.length > 0) {
-      try {
-        await onScoreAll(scored);
-        setBulkResult(`Scored ${scored.length} of ${activeClients.length} clients${errors.length > 0 ? ` (${errors.length} failed)` : ""}.`);
-      } catch (err) {
-        setBulkResult(`Scored ${scored.length} clients but failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
-      }
-    } else {
-      setBulkResult(`No scores generated. ${errors.length} errors.`);
-    }
+    setBulkResult(savedCount > 0
+      ? `Scored and saved ${savedCount} of ${activeClients.length} clients${errors.length > 0 ? ` (${errors.length} failed)` : ""}.`
+      : `No scores saved. ${errors.length} errors.`);
 
     setBulkScoring(false);
   };
@@ -2233,6 +2232,10 @@ export default function App() {
 
   const persist = useCallback(async (nd: AppData) => { setData(nd); saveData(nd); }, []);
 
+  // Ref to always access the latest data (avoids closure staleness in bulk save loops)
+  const dataRef = useRef(data);
+  useEffect(() => { dataRef.current = data; }, [data]);
+
   const visibleClients = useMemo(() => filterByAdvisor(data?.clients || [], currentUser), [data?.clients, currentUser]);
   const stats = useClientStats(visibleClients, data?.scores || [], data?.npsFeedback || [], data?.settings);
   const selected = data ? (data.clients || []).find(c => c.id === selectedId) : null;
@@ -2345,15 +2348,16 @@ export default function App() {
     await persist({ ...data, settings });
   };
 
-  const handleBulkAIScore = async (newScores: Score[]) => {
-    const existing = Array.isArray(data.scores) ? data.scores : [];
+  const handleBulkAIScore = async (newScore: Score) => {
+    // Read through the ref so repeated calls within a single loop see the latest state
+    const current = dataRef.current || data;
+    const existing = Array.isArray(current.scores) ? current.scores : [];
     const merged = [...existing];
-    // Replace an existing score for the same client/year/month, otherwise append
-    for (const ns of newScores) {
-      const idx = merged.findIndex(s => s.clientId === ns.clientId && s.year === ns.year && s.month === ns.month);
-      if (idx >= 0) merged[idx] = ns; else merged.push(ns);
-    }
-    await persist({ ...data, scores: merged });
+    const idx = merged.findIndex(s => s.clientId === newScore.clientId && s.year === newScore.year && s.month === newScore.month);
+    if (idx >= 0) merged[idx] = newScore; else merged.push(newScore);
+    const updated = { ...current, scores: merged };
+    dataRef.current = updated;
+    await persist(updated);
   };
 
   const handleClearAllScores = async () => {
