@@ -67,6 +67,53 @@ function StatCard({ label, value, color = "#111", sub, darkMode }: { label: stri
   </div>;
 }
 
+// Tier pill styling — soft background + saturated text per tier
+function tierStyles(tier: string, darkMode?: boolean): string {
+  if (tier === "Fractional Family Office") {
+    return darkMode
+      ? "bg-purple-900/40 text-purple-200 border-purple-800/50"
+      : "bg-purple-50 text-purple-700 border-purple-200";
+  }
+  if (tier === "FFO Strategic") {
+    return darkMode
+      ? "bg-teal-900/40 text-teal-200 border-teal-800/50"
+      : "bg-teal-50 text-teal-700 border-teal-200";
+  }
+  // FFO Access (entry tier)
+  return darkMode
+    ? "bg-slate-700 text-slate-200 border-slate-600"
+    : "bg-slate-100 text-slate-700 border-slate-200";
+}
+
+// Pod pill styling — distinct color per pod (hash-based fallback + curated overrides)
+const POD_PALETTE: Array<{ light: string; dark: string }> = [
+  { light: "bg-sky-50 text-sky-700 border-sky-200",             dark: "bg-sky-900/40 text-sky-200 border-sky-800/50" },
+  { light: "bg-emerald-50 text-emerald-700 border-emerald-200", dark: "bg-emerald-900/40 text-emerald-200 border-emerald-800/50" },
+  { light: "bg-violet-50 text-violet-700 border-violet-200",    dark: "bg-violet-900/40 text-violet-200 border-violet-800/50" },
+  { light: "bg-rose-50 text-rose-700 border-rose-200",          dark: "bg-rose-900/40 text-rose-200 border-rose-800/50" },
+  { light: "bg-amber-50 text-amber-700 border-amber-200",       dark: "bg-amber-900/40 text-amber-200 border-amber-800/50" },
+  { light: "bg-cyan-50 text-cyan-700 border-cyan-200",          dark: "bg-cyan-900/40 text-cyan-200 border-cyan-800/50" },
+  { light: "bg-indigo-50 text-indigo-700 border-indigo-200",    dark: "bg-indigo-900/40 text-indigo-200 border-indigo-800/50" },
+  { light: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200", dark: "bg-fuchsia-900/40 text-fuchsia-200 border-fuchsia-800/50" },
+  { light: "bg-teal-50 text-teal-700 border-teal-200",          dark: "bg-teal-900/40 text-teal-200 border-teal-800/50" },
+  { light: "bg-orange-50 text-orange-700 border-orange-200",    dark: "bg-orange-900/40 text-orange-200 border-orange-800/50" },
+];
+
+function podStyles(podId: string, darkMode?: boolean): string {
+  // Stable hash: "pod1" -> 0, "pod2" -> 1, etc.; falls back to string hash for non-numeric IDs.
+  const m = podId.match(/(\d+)$/);
+  let idx: number;
+  if (m) {
+    idx = (parseInt(m[1], 10) - 1) % POD_PALETTE.length;
+    if (idx < 0) idx = 0;
+  } else {
+    let h = 0; for (let i = 0; i < podId.length; i++) h = (h * 31 + podId.charCodeAt(i)) >>> 0;
+    idx = h % POD_PALETTE.length;
+  }
+  const entry = POD_PALETTE[idx];
+  return darkMode ? entry.dark : entry.light;
+}
+
 // ===== IMPORT DIALOG =====
 function ImportDialog({
   clients,
@@ -286,10 +333,14 @@ function OverviewTab({ stats, onSelect, onAdd, user, darkMode, settings }: { sta
           <div className="flex items-start justify-between mb-2">
             <div className="flex-1 min-w-0">
               <h3 className={`font-semibold truncate group-hover:text-blue-600 ${darkMode ? "text-gray-100" : "text-gray-900"}`}>{c.name}</h3>
-              <div className="flex items-center gap-2 mt-1 flex-wrap">
-                <span className={`text-xs px-2 py-0.5 rounded ${darkMode ? "bg-slate-700 text-gray-300" : "bg-gray-100 text-gray-600"}`}>{c.tier}</span>
-                <span className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-400"}`}>{(() => { const p = getPodForClient(c, settings); return p ? p.name : c.leadAdvisor; })()}</span>
-                <span className={`text-xs font-medium ${darkMode ? "text-gray-400" : "text-gray-400"}`}>{fmtM(c.monthlyFee)}/mo</span>
+              <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                <span className={`text-[11px] font-medium px-2 py-0.5 rounded-md border ${tierStyles(c.tier, darkMode)}`}>{c.tier}</span>
+                {(() => {
+                  const p = getPodForClient(c, settings);
+                  if (!p) return <span className={`text-[11px] ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{c.leadAdvisor}</span>;
+                  return <span className={`text-[11px] font-medium px-2 py-0.5 rounded-md border ${podStyles(p.id, darkMode)}`}>{p.name}</span>;
+                })()}
+                <span className={`text-[11px] font-semibold ${darkMode ? "text-emerald-400" : "text-emerald-600"}`}>{fmtM(c.monthlyFee)}/mo</span>
               </div>
             </div>
             <ScoreCircle score={c.latestScore} size={42} settings={settings} />
