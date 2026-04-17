@@ -735,7 +735,7 @@ function TeamTab({ stats, onSelect, darkMode, settings }: { stats: ClientStat[];
               <tr className={`border-t cursor-pointer ${darkMode ? "border-slate-700 hover:bg-slate-700" : "border-gray-100 hover:bg-gray-50"}`} onClick={() => setExpanded(expanded === tm.name ? null : tm.name)}>
                 <td className={`px-4 py-3 font-medium ${darkMode ? "text-gray-200" : "text-gray-900"}`}>{tm.name}</td>
                 <td className={`text-center px-2 py-3 ${darkMode ? "text-gray-300" : "text-gray-600"}`}>{tm.clients.length}</td>
-                <td className="text-center px-2 py-3"><ScoreCircle score={tm.avgScore} size={32} settings={settings} /></td>
+                <td className="px-2 py-3"><div className="flex justify-center"><ScoreCircle score={tm.avgScore} size={32} settings={settings} /></div></td>
                 <td className={`text-center px-2 py-3 hidden sm:table-cell text-green-600 font-semibold`}>{tm.healthyCount}</td>
                 <td className={`text-center px-2 py-3 hidden sm:table-cell text-amber-600 font-semibold`}>{tm.watchCount}</td>
                 <td className={`text-center px-2 py-3 hidden sm:table-cell text-red-600 font-semibold`}>{tm.atRiskCount}</td>
